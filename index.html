@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SaveMyEyes by KraftPixel</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <main class="container">
+      <!-- Header -->
+      <header class="header">
+        <div class="logo">
+          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 5C5.636 5 1 12 1 12s4.636 7 11 7 11-7 11-7-4.636-7-11-7z"/>
+          </svg>
+          <div class="logo-text">
+            <h1>SaveMyEyes</h1>
+            <p class="tagline">Screen Dimmer</p>
+          </div>
+        </div>
+        <a href="#" class="credit-link" id="credit-link">
+          <span class="credit-by">An open-source project by</span>
+          <span class="credit-name">KraftPixel</span>
+        </a>
+      </header>
+
+      <!-- Tab Navigation -->
+      <nav class="tabs">
+        <button class="tab active" data-tab="dimmer">Dimmer</button>
+        <button class="tab" data-tab="settings">Settings</button>
+        <button class="tab" data-tab="shortcuts">Shortcuts</button>
+      </nav>
+
+      <!-- Tab Content: Dimmer -->
+      <section class="tab-content active" id="tab-dimmer">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Dimming Level</h2>
+            <span class="badge" id="opacity-badge">30%</span>
+          </div>
+          <div class="slider-container">
+            <div class="slider-track">
+              <div class="slider-bg"></div>
+              <div class="slider-fill" id="slider-fill"></div>
+              <input 
+                type="range" 
+                id="opacity-slider" 
+                min="0" 
+                max="90" 
+                value="30"
+                class="slider"
+              />
+            </div>
+            <div class="slider-labels">
+              <span>0%</span>
+              <span>90%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-label">Dimmer Enabled</span>
+              <span class="setting-description">Apply dimming overlay to screen</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="enabled-toggle" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab Content: Settings -->
+      <section class="tab-content" id="tab-settings">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">General</h2>
+          </div>
+          <div class="settings-list">
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-label">Start on Login</span>
+                <span class="setting-description">Launch automatically at startup</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="autostart-toggle" />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <!-- Allow Screen Capture toggle removed - always hidden from capture now -->
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Updates</h2>
+          </div>
+          <div class="settings-list">
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-label">Auto-Update</span>
+                <span class="setting-description">Automatically download and install updates</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="auto-update-toggle" checked />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="divider"></div>
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-label">Check for Updates</span>
+                <span class="setting-description update-status" id="update-status"></span>
+              </div>
+              <button class="btn-secondary" id="check-update-btn">Check Now</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab Content: Shortcuts -->
+      <section class="tab-content" id="tab-shortcuts">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Keyboard Shortcuts</h2>
+          </div>
+          <div class="shortcuts-list">
+            <div class="shortcut-item">
+              <span class="shortcut-action">Toggle Dimmer</span>
+              <kbd class="kbd" id="hotkey-toggle">Ctrl+Alt+End</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-action">Increase Dimming</span>
+              <kbd class="kbd" id="hotkey-increase">Ctrl+Alt+Up</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span class="shortcut-action">Decrease Dimming</span>
+              <kbd class="kbd" id="hotkey-decrease">Ctrl+Alt+Down</kbd>
+            </div>
+          </div>
+        </div>
+        <p class="hint">Press a key combo while focused on a shortcut to change it.</p>
+      </section>
+
+      <!-- Status Toast -->
+      <div class="toast" id="toast">
+        <span id="status-msg"></span>
+      </div>
+    </main>
+  </body>
+</html>
