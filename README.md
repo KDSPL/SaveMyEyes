@@ -54,17 +54,15 @@ npm run tauri build
 
 ## Screenshots
 
-Place these files in `src/assets/` (PNG or JPG). 1280×720 or any clear 16:9 works well.
-
-- Dimmer tab: `src/assets/screenshot-dimmer.png`
+- Dimmer tab:
 
   ![Dimmer Tab](src/assets/screenshot-dimmer.png)
 
-- Settings tab: `src/assets/screenshot-settings.png`
+- Settings tab: 
 
   ![Settings Tab](src/assets/screenshot-settings.png)
 
-- Shortcuts tab: `src/assets/screenshot-shortcuts.png`
+- Shortcuts tab: 
 
   ![Shortcuts Tab](src/assets/screenshot-shortcuts.png)
 
