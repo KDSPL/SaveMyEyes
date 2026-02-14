@@ -14,7 +14,9 @@ dist-ssr
 
 # Editor directories and files
 .vscode/*
-!.vscode/extensions.json
+.vscode
+.venv/*
+.venv
 .idea
 .DS_Store
 *.suo
@@ -28,3 +30,15 @@ plan.md
 spec.md
 SaveMyEyes.ipynb
 *.ipynb
+
+# Private ideation / AI-assist artifacts
+*.prompt.md
+*.notes.md
+prompts/
+notes/
+research/
+.ai/
+.copilot/
+.cursor/
+.claude/
+.github/copilot-instructions.md

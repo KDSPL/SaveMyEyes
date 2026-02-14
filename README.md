@@ -8,6 +8,12 @@ A lightweight desktop utility that reduces screen luminance via a software overl
 
 **Quick download:** grab the latest `.exe` (portable) or `.msi` (installer) from the Releases page.
 
+<p align="center">
+  <a href="https://github.com/KDSPL/SaveMyEyes/releases/latest">
+    <img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows%20Installer-2ea44f?style=for-the-badge&logo=windows&logoColor=white" />
+  </a>
+</p>
+
 ## Features
 
 - 🌙 **Adjustable Dimming** - Reduce screen brightness from 0% to 90%
@@ -28,13 +34,13 @@ A lightweight desktop utility that reduces screen luminance via a software overl
 ## Installation
 
 ### Windows
-Download the latest `.msi` or `.exe` installer from the [Releases](https://github.com/KDSPL/savemyeyes/releases) page. The `.exe` build is portable (no install required); the `.msi` is the installer.
+Download the latest `.msi` or `.exe` installer from the [Releases](https://github.com/KDSPL/SaveMyEyes/releases) page. The `.exe` build is portable (no install required); the `.msi` is the installer.
 
 ### Build from Source
 ```bash
 # Clone the repository
-git clone https://github.com/KDSPL/savemyeyes.git
-cd savemyeyes
+git clone https://github.com/KDSPL/SaveMyEyes.git
+cd SaveMyEyes
 
 # Install dependencies
 npm install

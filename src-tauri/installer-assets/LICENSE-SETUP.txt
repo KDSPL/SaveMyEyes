@@ -1,0 +1,14 @@
+SaveMyEyes - Installer Terms and Notices
+
+Open-source by KraftPixel: https://kraftpixel.com
+Hire KraftPixel to build custom software (web or native): info@kraftpixel.com
+
+Important Disclaimer
+- SaveMyEyes is a comfort and productivity utility. It is not a medical device.
+- It does not diagnose, treat, cure, or prevent any disease or medical condition.
+- It is not medical advice. For medical concerns, consult a qualified healthcare professional.
+
+Limitation of Liability
+By installing and using SaveMyEyes, you agree that the software is provided "as is" without warranties of any kind, express or implied. To the maximum extent permitted by law, KraftPixel and contributors are not liable for any direct, indirect, incidental, special, consequential, or exemplary damages arising from use of the software.
+
+If you do not agree to these terms, cancel installation.
