@@ -12,10 +12,10 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, IsWindow, RegisterClassW,
     SetLayeredWindowAttributes, SetWindowDisplayAffinity, SetWindowPos, ShowWindow, CS_HREDRAW,
-    CS_VREDRAW, HWND_TOPMOST, LWA_ALPHA, SW_HIDE, SW_SHOWNA, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
-    WM_WINDOWPOSCHANGING, WINDOWPOS, WS_DISABLED, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE, WNDCLASSW,
+    CS_VREDRAW, HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SW_HIDE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOWPOS, WM_WINDOWPOSCHANGING, WNDCLASSW,
+    WS_DISABLED, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 
 // Thread-safe wrapper for HWND
@@ -95,11 +95,7 @@ unsafe extern "system" fn monitor_enum_proc(
         let class_name: Vec<u16> = CLASS_NAME.encode_utf16().collect();
 
         let hwnd = CreateWindowExW(
-            WS_EX_LAYERED
-                | WS_EX_TRANSPARENT
-                | WS_EX_TOPMOST
-                | WS_EX_TOOLWINDOW
-                | WS_EX_NOACTIVATE,
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             PCWSTR(class_name.as_ptr()),
             PCWSTR::null(),
             WS_POPUP | WS_VISIBLE | WS_DISABLED,
@@ -163,44 +159,37 @@ pub fn show_overlay(opacity: f32, allow_capture: bool) {
 
     // Start watchdog thread to detect externally destroyed overlay windows
     if !WATCHDOG_RUNNING.swap(true, Ordering::SeqCst) {
-        std::thread::spawn(|| {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(2));
+        std::thread::spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
 
-                let windows = OVERLAY_WINDOWS.lock().unwrap();
-                if windows.is_empty() {
-                    drop(windows);
-                    WATCHDOG_RUNNING.store(false, Ordering::SeqCst);
-                    break;
-                }
+            let windows = OVERLAY_WINDOWS.lock().unwrap();
+            if windows.is_empty() {
+                drop(windows);
+                WATCHDOG_RUNNING.store(false, Ordering::SeqCst);
+                break;
+            }
 
-                let mut needs_recreate = false;
-                for wrapper in windows.iter() {
-                    unsafe {
-                        let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
-                        if !IsWindow(Some(hwnd)).as_bool() {
-                            needs_recreate = true;
-                            break;
-                        }
+            let mut needs_recreate = false;
+            for wrapper in windows.iter() {
+                unsafe {
+                    let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
+                    if !IsWindow(Some(hwnd)).as_bool() {
+                        needs_recreate = true;
+                        break;
                     }
                 }
-                drop(windows);
+            }
+            drop(windows);
 
-                if needs_recreate {
-                    let opacity = *CURRENT_OPACITY.lock().unwrap();
-                    let allow_capture = *ALLOW_CAPTURE.lock().unwrap();
-                    hide_overlay();
-                    if register_class() {
-                        *CURRENT_OPACITY.lock().unwrap() = opacity;
-                        *ALLOW_CAPTURE.lock().unwrap() = allow_capture;
-                        unsafe {
-                            let _ = EnumDisplayMonitors(
-                                None,
-                                None,
-                                Some(monitor_enum_proc),
-                                LPARAM(0),
-                            );
-                        }
+            if needs_recreate {
+                let opacity = *CURRENT_OPACITY.lock().unwrap();
+                let allow_capture = *ALLOW_CAPTURE.lock().unwrap();
+                hide_overlay();
+                if register_class() {
+                    *CURRENT_OPACITY.lock().unwrap() = opacity;
+                    *ALLOW_CAPTURE.lock().unwrap() = allow_capture;
+                    unsafe {
+                        let _ = EnumDisplayMonitors(None, None, Some(monitor_enum_proc), LPARAM(0));
                     }
                 }
             }
@@ -220,41 +209,6 @@ pub fn hide_overlay() {
     }
 }
 
-/// Temporarily hide overlay windows without destroying them
-pub fn hide_overlay_temp() -> bool {
-    let windows = OVERLAY_WINDOWS.lock().unwrap();
-    if windows.is_empty() {
-        return false;
-    }
-    for wrapper in windows.iter() {
-        unsafe {
-            let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
-            let _ = ShowWindow(hwnd, SW_HIDE);
-        }
-    }
-    true
-}
-
-/// Restore temporarily hidden overlay windows
-pub fn restore_overlay_temp() {
-    let windows = OVERLAY_WINDOWS.lock().unwrap();
-    for wrapper in windows.iter() {
-        unsafe {
-            let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
-            let _ = ShowWindow(hwnd, SW_SHOWNA);
-            let _ = SetWindowPos(
-                hwnd,
-                Some(HWND_TOPMOST),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            );
-        }
-    }
-}
-
 /// Update overlay alpha on all windows
 pub fn set_opacity(opacity: f32) {
     let opacity = opacity.clamp(0.0, 0.9);
@@ -270,21 +224,7 @@ pub fn set_opacity(opacity: f32) {
     }
 }
 
-/// Get current overlay opacity
-pub fn get_opacity() -> f32 {
-    *CURRENT_OPACITY.lock().unwrap()
-}
-
 /// Check if overlay is visible
 pub fn is_visible() -> bool {
     !OVERLAY_WINDOWS.lock().unwrap().is_empty()
-}
-
-/// Toggle overlay visibility
-pub fn toggle(opacity: f32, allow_capture: bool) {
-    if is_visible() {
-        hide_overlay();
-    } else {
-        show_overlay(opacity, allow_capture);
-    }
 }

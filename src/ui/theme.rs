@@ -23,9 +23,6 @@ pub const CLR_BORDER: COLORREF = COLORREF(0x003B291E);
 /// Input/toggle background (same as secondary)
 pub const CLR_INPUT: COLORREF = COLORREF(0x003B291E);
 
-/// Ring/focus color: hsl(212.7, 26.8%, 83.9%) → #CBD5E1
-pub const CLR_RING: COLORREF = COLORREF(0x00E1D5CB);
-
 // ── Dimensions ───────────────────────────────────────────────────────────────
 
 /// Main window client area dimensions
@@ -50,7 +47,7 @@ pub const GAP: i32 = 12;
 // ── Font sizes (in logical units, negative for character height) ─────────────
 
 pub const FONT_SIZE_TITLE: i32 = -18; // ~1.25rem → h1 title
-pub const FONT_SIZE_NORMAL: i32 = -14; // base
+
 pub const FONT_SIZE_SMALL: i32 = -12; // 0.875rem
 pub const FONT_SIZE_XS: i32 = -11; // 0.75rem
 pub const FONT_SIZE_XXS: i32 = -10; // 0.7rem

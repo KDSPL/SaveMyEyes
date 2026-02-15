@@ -15,7 +15,6 @@ pub enum Tab {
 pub struct ToggleState {
     pub checked: bool,
     pub rect: RECT,
-    pub hover: bool,
 }
 
 impl ToggleState {
@@ -23,7 +22,6 @@ impl ToggleState {
         Self {
             checked,
             rect: RECT::default(),
-            hover: false,
         }
     }
 }
@@ -33,7 +31,6 @@ impl ToggleState {
 pub struct SliderState {
     pub value: i32, // 0-90
     pub dragging: bool,
-    pub hover: bool,
     pub rect: RECT,       // full track rect
     pub thumb_rect: RECT, // thumb hit area
 }
@@ -43,7 +40,6 @@ impl SliderState {
         Self {
             value: value.clamp(0, 90),
             dragging: false,
-            hover: false,
             rect: RECT::default(),
             thumb_rect: RECT::default(),
         }
@@ -71,7 +67,6 @@ impl SliderState {
 pub struct ButtonState {
     pub rect: RECT,
     pub hover: bool,
-    pub pressed: bool,
     pub disabled: bool,
     pub text: String,
 }
@@ -81,7 +76,6 @@ impl ButtonState {
         Self {
             rect: RECT::default(),
             hover: false,
-            pressed: false,
             disabled: false,
             text: text.to_string(),
         }
@@ -110,11 +104,9 @@ pub struct UiState {
     // Toast
     pub toast_message: String,
     pub toast_visible: bool,
-    pub toast_timer_id: usize,
 
     // Header credit link
     pub credit_rect: RECT,
-    pub credit_hover: bool,
 }
 
 impl UiState {
@@ -140,10 +132,8 @@ impl UiState {
 
             toast_message: String::new(),
             toast_visible: false,
-            toast_timer_id: 100,
 
             credit_rect: RECT::default(),
-            credit_hover: false,
         }
     }
 }

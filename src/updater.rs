@@ -7,7 +7,11 @@ static CHECKING: AtomicBool = AtomicBool::new(false);
 #[derive(Debug)]
 pub enum UpdateResult {
     NoUpdate,
-    UpdateAvailable { version: String, url: String },
+    UpdateAvailable {
+        _version: String,
+        url: String,
+    },
+    #[allow(dead_code)]
     Error(String),
 }
 
@@ -63,7 +67,7 @@ fn do_check(current_version: &str) -> UpdateResult {
     // Simple version comparison (works for semver x.y.z)
     if version_newer(latest_version, current_version) {
         UpdateResult::UpdateAvailable {
-            version: latest_version.to_string(),
+            _version: latest_version.to_string(),
             url: html_url,
         }
     } else {
