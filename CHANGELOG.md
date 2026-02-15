@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.2
+- Fix auto-updater issue
+
+## v0.9.1
+- Removed dependency on Tauri to reduce memory footprint (now at around 5 MB).
+- Changed the dimming approach from using a Window to using the Windows Magnification API.
+- Release now produces a single .exe file. Installer on the todo list.
+
 ## v0.9.0
 - Added updater integration with in-app update toggle and manual check flow.
 - Improved overlay stability and reduced flicker during screenshot / recording workflows.
