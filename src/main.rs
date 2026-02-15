@@ -12,10 +12,9 @@ mod updater;
 use config::AppConfig;
 use std::sync::{Arc, Mutex};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::{CreateMutexW, OpenMutexW, SYNCHRONIZATION_ACCESS_RIGHTS};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, PostMessageW, TranslateMessage, MSG, WM_APP,
+    DispatchMessageW, GetMessageW, TranslateMessage, MSG,
 };
 
 const SINGLE_INSTANCE_MUTEX: &str = "SaveMyEyesMutex\0";
@@ -25,6 +24,12 @@ fn main() {
     if is_already_running() {
         return;
     }
+
+    // Clean up .old exe from a previous self-update
+    updater::cleanup_old_exe();
+
+    // Check if we were just updated
+    let just_updated = updater::was_just_updated();
 
     // Load config
     let cfg = config::load_config();
@@ -50,23 +55,31 @@ fn main() {
     // Show and focus main window on startup
     ui::show_window(hwnd);
 
+    // Show "just updated" toast if relaunched after self-update
+    if just_updated {
+        ui::show_toast(hwnd, &format!("Updated to v{} successfully!", updater::APP_VERSION));
+    }
+
     // Auto-check for updates in background (silent, after 5 seconds)
     {
         let config_clone = config.clone();
-        let hwnd_val = hwnd.0 as isize;
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(5));
             let auto_update = config_clone.lock().unwrap().auto_update;
             if auto_update {
-                let result = updater::check_for_update("0.9.0");
-                if let updater::UpdateResult::UpdateAvailable { .. } = result {
-                    unsafe {
-                        let _ = PostMessageW(
-                            Some(HWND(hwnd_val as *mut _)),
-                            WM_APP + 10,
-                            WPARAM(1),
-                            LPARAM(0),
-                        );
+                let result = updater::check_for_update(updater::APP_VERSION);
+                if let updater::UpdateResult::UpdateAvailable { version, download_url, .. } = result {
+                    // Ask user if they want to auto-download
+                    if updater::prompt_update_dialog(&version) {
+                        match updater::download_update(&download_url) {
+                            Ok(path) => {
+                                let _ = updater::apply_update_and_relaunch(&path);
+                            }
+                            Err(_e) => {
+                                // Fallback: open releases page in browser
+                                updater::open_url("https://github.com/KDSPL/savemyeyes/releases");
+                            }
+                        }
                     }
                 }
             }

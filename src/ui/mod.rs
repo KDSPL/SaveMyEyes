@@ -327,22 +327,69 @@ unsafe extern "system" fn wnd_proc(
                     // Run update check in background thread
                     let hwnd_val = hwnd.0 as isize;
                     std::thread::spawn(move || {
-                        let result = updater::check_for_update("0.9.0");
-                        let msg_code = match result {
-                            updater::UpdateResult::NoUpdate => 0isize,
-                            updater::UpdateResult::UpdateAvailable { url, .. } => {
-                                updater::open_url(&url);
-                                1
+                        let result = updater::check_for_update(updater::APP_VERSION);
+                        match result {
+                            updater::UpdateResult::UpdateAvailable { version, download_url, .. } => {
+                                // Ask user if they want to auto-download
+                                if updater::prompt_update_dialog(&version) {
+                                    // Signal "downloading" to UI
+                                    unsafe {
+                                        let _ = PostMessageW(
+                                            Some(HWND(hwnd_val as *mut _)),
+                                            WM_APP + 10,
+                                            WPARAM(3), // 3 = downloading
+                                            LPARAM(0),
+                                        );
+                                    }
+                                    match updater::download_update(&download_url) {
+                                        Ok(path) => {
+                                            let _ = updater::apply_update_and_relaunch(&path);
+                                        }
+                                        Err(_e) => {
+                                            // Fallback: open releases page
+                                            updater::open_url("https://github.com/KDSPL/savemyeyes/releases");
+                                            unsafe {
+                                                let _ = PostMessageW(
+                                                    Some(HWND(hwnd_val as *mut _)),
+                                                    WM_APP + 10,
+                                                    WPARAM(4), // 4 = download failed
+                                                    LPARAM(0),
+                                                );
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // User declined
+                                    unsafe {
+                                        let _ = PostMessageW(
+                                            Some(HWND(hwnd_val as *mut _)),
+                                            WM_APP + 10,
+                                            WPARAM(0),
+                                            LPARAM(0),
+                                        );
+                                    }
+                                }
                             }
-                            updater::UpdateResult::Error(_) => 2,
-                        };
-                        unsafe {
-                            let _ = PostMessageW(
-                                Some(HWND(hwnd_val as *mut _)),
-                                WM_APP + 10,
-                                WPARAM(msg_code as usize),
-                                LPARAM(0),
-                            );
+                            updater::UpdateResult::NoUpdate => {
+                                unsafe {
+                                    let _ = PostMessageW(
+                                        Some(HWND(hwnd_val as *mut _)),
+                                        WM_APP + 10,
+                                        WPARAM(0),
+                                        LPARAM(0),
+                                    );
+                                }
+                            }
+                            updater::UpdateResult::Error(_) => {
+                                unsafe {
+                                    let _ = PostMessageW(
+                                        Some(HWND(hwnd_val as *mut _)),
+                                        WM_APP + 10,
+                                        WPARAM(2),
+                                        LPARAM(0),
+                                    );
+                                }
+                            }
                         }
                     });
                     return LRESULT(0);
@@ -514,10 +561,20 @@ unsafe extern "system" fn wnd_proc(
                         state.ui.update_status_text = "Opening download page...".into();
                         show_toast(hwnd, "Update available!");
                     }
-                    _ => {
+                    2 => {
                         state.ui.update_status_text = "Update check failed".into();
                         show_toast(hwnd, "Update check failed");
                     }
+                    3 => {
+                        state.ui.check_update_btn.disabled = true;
+                        state.ui.update_status_text = "Downloading update...".into();
+                        show_toast(hwnd, "Downloading update...");
+                    }
+                    4 => {
+                        state.ui.update_status_text = "Download failed, opened releases page".into();
+                        show_toast(hwnd, "Download failed");
+                    }
+                    _ => {}
                 }
                 invalidate(hwnd);
 

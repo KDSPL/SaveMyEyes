@@ -2,6 +2,7 @@
 
 use super::controls::*;
 use super::theme::*;
+use crate::updater;
 use windows::Win32::Foundation::{COLORREF, RECT};
 use windows::Win32::Graphics::Gdi::*;
 
@@ -486,6 +487,17 @@ fn draw_settings_tab(hdc: HDC, y: i32, state: &mut UiState, fonts: &Fonts) {
         card2_top + 12,
         CLR_FOREGROUND,
         fonts.small_bold,
+    );
+
+    // Show current version in tiny text next to "Updates" heading
+    let version_text = format!("v{}", updater::APP_VERSION);
+    draw_text_simple(
+        hdc,
+        &version_text,
+        inner_x + 60,
+        card2_top + 15,
+        CLR_MUTED_FG,
+        fonts.xxs,
     );
     draw_text_simple(
         hdc,

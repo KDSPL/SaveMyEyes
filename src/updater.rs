@@ -1,15 +1,20 @@
-// HTTP-based update checker against GitHub releases
+// HTTP-based update checker and auto-updater against GitHub releases
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static CHECKING: AtomicBool = AtomicBool::new(false);
 
+/// Application version — single source of truth
+pub const APP_VERSION: &str = "0.9.0";
+
 #[derive(Debug)]
 pub enum UpdateResult {
     NoUpdate,
     UpdateAvailable {
-        _version: String,
+        version: String,
+        #[allow(dead_code)]
         url: String,
+        download_url: String,
     },
     #[allow(dead_code)]
     Error(String),
@@ -64,15 +69,49 @@ fn do_check(current_version: &str) -> UpdateResult {
         return UpdateResult::NoUpdate;
     }
 
+    // Find the .exe download URL from assets
+    let download_url = extract_exe_download_url(&body)
+        .unwrap_or_else(|| format!(
+            "https://github.com/KDSPL/savemyeyes/releases/download/{}/savemyeyes.exe",
+            tag
+        ));
+
     // Simple version comparison (works for semver x.y.z)
     if version_newer(latest_version, current_version) {
         UpdateResult::UpdateAvailable {
-            _version: latest_version.to_string(),
+            version: latest_version.to_string(),
             url: html_url,
+            download_url,
         }
     } else {
         UpdateResult::NoUpdate
     }
+}
+
+/// Extract the first .exe asset download URL from a GitHub release JSON
+fn extract_exe_download_url(json: &str) -> Option<String> {
+    // Look for browser_download_url that ends with .exe
+    let marker = "browser_download_url";
+    let mut search_from = 0;
+    while let Some(pos) = json[search_from..].find(marker) {
+        let abs_pos = search_from + pos;
+        let after_key = &json[abs_pos + marker.len()..];
+        // Skip ": "
+        let after_colon = after_key.trim_start().strip_prefix('"')?;
+        let colon_stripped = after_colon.trim_start().strip_prefix(':')?;
+        let val_start = colon_stripped.trim_start().strip_prefix('"');
+
+        if let Some(val) = val_start {
+            if let Some(end) = val.find('"') {
+                let url = &val[..end];
+                if url.ends_with(".exe") {
+                    return Some(url.to_string());
+                }
+            }
+        }
+        search_from = abs_pos + marker.len();
+    }
+    None
 }
 
 /// Extract a string value from JSON by key name (simple extraction, no full parser)
@@ -122,5 +161,101 @@ pub fn open_url(url: &str) {
             None,
             windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
         );
+    }
+}
+
+/// Download the update .exe to a temp file.
+/// Returns the path to the downloaded file on success.
+pub fn download_update(download_url: &str) -> Result<std::path::PathBuf, String> {
+    let response = ureq::get(download_url)
+        .set("User-Agent", "SaveMyEyes-Updater")
+        .call()
+        .map_err(|e| format!("Download failed: {}", e))?;
+
+    let temp_dir = std::env::temp_dir();
+    let temp_path = temp_dir.join("savemyeyes_update.exe");
+
+    let mut reader = response.into_reader();
+    let mut file = std::fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    std::io::copy(&mut reader, &mut file)
+        .map_err(|e| format!("Failed to write update: {}", e))?;
+
+    Ok(temp_path)
+}
+
+/// Replace the current exe with the downloaded update and relaunch.
+/// Strategy:
+///   1. Rename current exe to .old
+///   2. Copy new exe to current path
+///   3. Launch new exe with --updated flag
+///   4. Exit current process
+pub fn apply_update_and_relaunch(downloaded_path: &std::path::Path) -> Result<(), String> {
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Cannot determine current exe path: {}", e))?;
+
+    let old_path = current_exe.with_extension("exe.old");
+
+    // Remove previous .old if it exists
+    let _ = std::fs::remove_file(&old_path);
+
+    // Rename current → .old
+    std::fs::rename(&current_exe, &old_path)
+        .map_err(|e| format!("Failed to rename current exe: {}", e))?;
+
+    // Copy downloaded → current path
+    std::fs::copy(downloaded_path, &current_exe)
+        .map_err(|e| {
+            // Try to restore old exe
+            let _ = std::fs::rename(&old_path, &current_exe);
+            format!("Failed to copy new exe: {}", e)
+        })?;
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(downloaded_path);
+
+    // Launch the new exe with --updated flag
+    let _ = std::process::Command::new(&current_exe)
+        .arg("--updated")
+        .spawn();
+
+    // Exit current process
+    std::process::exit(0);
+}
+
+/// Check if the app was just updated (launched with --updated flag)
+pub fn was_just_updated() -> bool {
+    std::env::args().any(|a| a == "--updated")
+}
+
+/// Clean up the .old file from a previous update (best-effort)
+pub fn cleanup_old_exe() {
+    if let Ok(current) = std::env::current_exe() {
+        let old_path = current.with_extension("exe.old");
+        let _ = std::fs::remove_file(old_path);
+    }
+}
+
+/// Show a Win32 Yes/No message box asking the user to update.
+/// Returns true if user clicked Yes.
+pub fn prompt_update_dialog(new_version: &str) -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONINFORMATION, MB_YESNO};
+
+    let message = format!(
+        "A new version (v{}) of SaveMyEyes is available!\n\nWould you like to download and install it now?\n\nThe app will restart automatically after updating.",
+        new_version
+    );
+    let msg_wide: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+    let title_wide: Vec<u16> = "SaveMyEyes Update".encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let result = MessageBoxW(
+            None,
+            PCWSTR(msg_wide.as_ptr()),
+            PCWSTR(title_wide.as_ptr()),
+            MB_YESNO | MB_ICONINFORMATION,
+        );
+        result == IDYES
     }
 }
