@@ -48,6 +48,9 @@ fn main() {
     {
         let cfg = config.lock().unwrap();
         if cfg.is_enabled {
+            if cfg.multi_monitor {
+                overlay::set_per_monitor_opacities(&cfg.per_monitor_opacity);
+            }
             overlay::show_overlay(cfg.opacity, false);
         }
     }
@@ -141,31 +144,70 @@ pub fn do_toggle_dimmer(config: &Arc<Mutex<AppConfig>>) {
         cfg.is_enabled = true;
         cfg.opacity = cfg.last_opacity;
         config::save_config(&cfg);
+        if cfg.multi_monitor {
+            overlay::set_per_monitor_opacities(&cfg.per_monitor_opacity);
+        }
         overlay::show_overlay(cfg.opacity, false);
     }
+}
+
+/// Get the cursor position
+fn get_cursor_pos() -> (i32, i32) {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut pt = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut pt);
+    }
+    (pt.x, pt.y)
 }
 
 /// Adjust opacity by delta (called from hotkey handler)
 pub fn do_adjust_opacity(config: &Arc<Mutex<AppConfig>>, delta: f32) {
     let mut cfg = config.lock().unwrap();
 
-    let was_disabled = !cfg.is_enabled;
-    if was_disabled {
-        cfg.is_enabled = true;
-        cfg.opacity = cfg.last_opacity;
-    }
+    if cfg.multi_monitor {
+        // Multi-monitor mode: adjust only the monitor under the cursor
+        let (cx, cy) = get_cursor_pos();
+        let mon_idx = overlay::get_monitor_index_at_point(cx, cy);
 
-    let new_opacity = (cfg.opacity + delta).clamp(0.0, 0.9);
-    cfg.opacity = new_opacity;
+        let was_disabled = !cfg.is_enabled;
+        if was_disabled {
+            cfg.is_enabled = true;
+            cfg.opacity = cfg.last_opacity;
+        }
 
-    if new_opacity > 0.0 {
-        cfg.last_opacity = new_opacity;
-    }
-    config::save_config(&cfg);
+        let current = cfg.per_monitor_opacity.get(&mon_idx).copied().unwrap_or(cfg.opacity);
+        let new_opacity = (current + delta).clamp(0.0, 0.9);
+        cfg.per_monitor_opacity.insert(mon_idx, new_opacity);
+        config::save_config(&cfg);
 
-    if was_disabled {
-        overlay::show_overlay(cfg.opacity, false);
-    } else if overlay::is_visible() {
-        overlay::set_opacity(cfg.opacity);
+        if was_disabled {
+            overlay::set_per_monitor_opacities(&cfg.per_monitor_opacity);
+            overlay::show_overlay(cfg.opacity, false);
+        } else if overlay::is_visible() {
+            overlay::set_monitor_opacity(mon_idx, new_opacity);
+        }
+    } else {
+        // Single-monitor mode: original behavior
+        let was_disabled = !cfg.is_enabled;
+        if was_disabled {
+            cfg.is_enabled = true;
+            cfg.opacity = cfg.last_opacity;
+        }
+
+        let new_opacity = (cfg.opacity + delta).clamp(0.0, 0.9);
+        cfg.opacity = new_opacity;
+
+        if new_opacity > 0.0 {
+            cfg.last_opacity = new_opacity;
+        }
+        config::save_config(&cfg);
+
+        if was_disabled {
+            overlay::show_overlay(cfg.opacity, false);
+        } else if overlay::is_visible() {
+            overlay::set_opacity(cfg.opacity);
+        }
     }
 }

@@ -33,6 +33,7 @@ pub struct SliderState {
     pub dragging: bool,
     pub rect: RECT,       // full track rect
     pub thumb_rect: RECT, // thumb hit area
+    pub monitor_index: Option<u32>, // None = global, Some(idx) = per-monitor
 }
 
 impl SliderState {
@@ -42,6 +43,7 @@ impl SliderState {
             dragging: false,
             rect: RECT::default(),
             thumb_rect: RECT::default(),
+            monitor_index: None,
         }
     }
 
@@ -92,6 +94,12 @@ pub struct UiState {
     pub slider: SliderState,
     pub enabled_toggle: ToggleState,
 
+    // Multi-monitor
+    pub multi_monitor_toggle: ToggleState,
+    pub multi_monitor_enabled: bool,
+    pub monitor_sliders: Vec<SliderState>,
+    pub monitor_count: u32,
+
     // Settings tab
     pub autostart_toggle: ToggleState,
     pub auto_update_toggle: ToggleState,
@@ -118,6 +126,11 @@ impl UiState {
 
             slider: SliderState::new(30),
             enabled_toggle: ToggleState::new(true),
+
+            multi_monitor_toggle: ToggleState::new(false),
+            multi_monitor_enabled: false,
+            monitor_sliders: Vec::new(),
+            monitor_count: 0,
 
             autostart_toggle: ToggleState::new(false),
             auto_update_toggle: ToggleState::new(true),

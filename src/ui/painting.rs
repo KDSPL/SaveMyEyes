@@ -295,6 +295,150 @@ fn draw_dimmer_tab(hdc: HDC, y: i32, state: &mut UiState, fonts: &Fonts) {
     let inner_x = x + 16;
     let inner_right = x + CONTENT_WIDTH - 16;
 
+    if state.multi_monitor_enabled && state.monitor_count > 1 {
+        // Multi-monitor mode: one slider per monitor
+        let slider_card_height = 70i32;
+        let mut card_top = y;
+
+        // Ensure we have enough sliders
+        while state.monitor_sliders.len() < state.monitor_count as usize {
+            let idx = state.monitor_sliders.len() as u32;
+            let mut s = SliderState::new(30);
+            s.monitor_index = Some(idx);
+            state.monitor_sliders.push(s);
+        }
+
+        for i in 0..state.monitor_count as usize {
+            let card = RECT {
+                left: x,
+                top: card_top,
+                right: x + CONTENT_WIDTH,
+                bottom: card_top + slider_card_height,
+            };
+            draw_rounded_rect(hdc, &card, CARD_RADIUS, CLR_BACKGROUND, CLR_BORDER);
+
+            // Monitor number label on the left
+            let mon_label = format!("{}", i + 1);
+            let (lw, lh) = measure_text(hdc, &mon_label, fonts.title);
+            let label_x = inner_x;
+            let label_y = card_top + (slider_card_height - lh) / 2;
+
+            // Draw a small circle behind the number
+            let circle_r = lh.max(lw) / 2 + 4;
+            let circle_cx = label_x + circle_r;
+            let circle_cy = label_y + lh / 2;
+            draw_circle(hdc, circle_cx, circle_cy, circle_r, CLR_SECONDARY);
+            draw_text_simple(hdc, &mon_label, circle_cx - lw / 2, label_y, CLR_FOREGROUND, fonts.small_bold);
+
+            // Slider area starts after the label
+            let slider_left = label_x + circle_r * 2 + 12;
+
+            // Badge
+            let badge_text = format!("{}%", state.monitor_sliders[i].value);
+            let (bw, bh) = measure_text(hdc, &badge_text, fonts.xs);
+            let badge_w = bw + 16;
+            let badge_h = bh + 4;
+            let badge_x = inner_right - badge_w;
+            let badge_y = card_top + 8;
+            let badge_rect = RECT {
+                left: badge_x,
+                top: badge_y,
+                right: badge_x + badge_w,
+                bottom: badge_y + badge_h,
+            };
+            draw_rounded_rect(hdc, &badge_rect, badge_h / 2, CLR_BRAND, CLR_BRAND);
+            draw_text_simple(
+                hdc,
+                &badge_text,
+                badge_x + (badge_w - bw) / 2,
+                badge_y + (badge_h - bh) / 2,
+                CLR_FOREGROUND,
+                fonts.xs,
+            );
+
+            // Slider track
+            let slider_y = card_top + 36;
+            let track_h = 8;
+            let thumb_r = 9;
+
+            state.monitor_sliders[i].rect = RECT {
+                left: slider_left,
+                top: slider_y,
+                right: inner_right,
+                bottom: slider_y + track_h,
+            };
+
+            let track_rect = state.monitor_sliders[i].rect;
+            draw_rounded_rect(hdc, &track_rect, 4, CLR_SECONDARY, CLR_SECONDARY);
+
+            let track_width = inner_right - slider_left;
+            let fill_w = ((state.monitor_sliders[i].value as f32 / 90.0) * track_width as f32) as i32;
+            if fill_w > 0 {
+                let fill_rect = RECT {
+                    left: slider_left,
+                    top: slider_y,
+                    right: slider_left + fill_w,
+                    bottom: slider_y + track_h,
+                };
+                draw_rounded_rect(hdc, &fill_rect, 4, CLR_BRAND, CLR_BRAND);
+            }
+
+            let thumb_x = state.monitor_sliders[i].thumb_x();
+            let thumb_cy = slider_y + track_h / 2;
+            draw_circle(hdc, thumb_x, thumb_cy, thumb_r, CLR_FOREGROUND);
+
+            state.monitor_sliders[i].thumb_rect = RECT {
+                left: slider_left - thumb_r,
+                top: slider_y - thumb_r - 4,
+                right: inner_right + thumb_r,
+                bottom: slider_y + track_h + thumb_r + 4,
+            };
+
+            card_top = card.bottom + GAP / 2;
+        }
+
+        // Card: Dimmer Enabled
+        let card2_top = card_top + GAP / 2;
+        let card2 = RECT {
+            left: x,
+            top: card2_top,
+            right: x + CONTENT_WIDTH,
+            bottom: card2_top + 56,
+        };
+        draw_rounded_rect(hdc, &card2, CARD_RADIUS, CLR_BACKGROUND, CLR_BORDER);
+
+        draw_text_simple(
+            hdc,
+            "Dimmer Enabled",
+            inner_x,
+            card2_top + 10,
+            CLR_FOREGROUND,
+            fonts.small_bold,
+        );
+        draw_text_simple(
+            hdc,
+            "Apply dimming overlay to screens",
+            inner_x,
+            card2_top + 28,
+            CLR_MUTED_FG,
+            fonts.xs,
+        );
+
+        let toggle_x = inner_right - 44;
+        state.enabled_toggle.rect =
+            draw_toggle(hdc, toggle_x, card2_top + 16, state.enabled_toggle.checked);
+
+    } else {
+        // Single-monitor mode: original layout
+        draw_dimmer_tab_single(hdc, y, state, fonts);
+    }
+}
+
+fn draw_dimmer_tab_single(hdc: HDC, y: i32, state: &mut UiState, fonts: &Fonts) {
+    let x = PADDING;
+    let inner_x = x + 16;
+    let inner_right = x + CONTENT_WIDTH - 16;
+
     // Card 1: Dimming Level
     let card1_top = y;
     let card1 = RECT {
@@ -435,7 +579,7 @@ fn draw_settings_tab(hdc: HDC, y: i32, state: &mut UiState, fonts: &Fonts) {
         left: x,
         top: card1_top,
         right: x + CONTENT_WIDTH,
-        bottom: card1_top + 80,
+        bottom: card1_top + 120,
     };
     draw_rounded_rect(hdc, &card1, CARD_RADIUS, CLR_BACKGROUND, CLR_BORDER);
 
@@ -468,6 +612,40 @@ fn draw_settings_tab(hdc: HDC, y: i32, state: &mut UiState, fonts: &Fonts) {
         toggle_x,
         card1_top + 40,
         state.autostart_toggle.checked,
+    );
+
+    // Divider
+    let div1_y = card1_top + 72;
+    unsafe {
+        let pen = CreatePen(PS_SOLID, 1, CLR_BORDER);
+        let old = SelectObject(hdc, HGDIOBJ::from(pen));
+        let _ = MoveToEx(hdc, inner_x, div1_y, None);
+        let _ = LineTo(hdc, inner_right, div1_y);
+        SelectObject(hdc, old);
+        let _ = DeleteObject(HGDIOBJ::from(pen));
+    }
+
+    draw_text_simple(
+        hdc,
+        "Multi-Monitor Brightness",
+        inner_x,
+        div1_y + 8,
+        CLR_FOREGROUND,
+        fonts.small_bold,
+    );
+    draw_text_simple(
+        hdc,
+        "Independent dimming per monitor",
+        inner_x,
+        div1_y + 24,
+        CLR_MUTED_FG,
+        fonts.xs,
+    );
+    state.multi_monitor_toggle.rect = draw_toggle(
+        hdc,
+        toggle_x,
+        div1_y + 12,
+        state.multi_monitor_toggle.checked,
     );
 
     // Card 2: Updates

@@ -39,12 +39,24 @@ struct HookWrapper(isize);
 unsafe impl Send for HookWrapper {}
 unsafe impl Sync for HookWrapper {}
 
-static OVERLAY_WINDOWS: Mutex<Vec<HwndWrapper>> = Mutex::new(Vec::new());
+/// Info about each monitor overlay (window handle + monitor index)
+struct OverlayEntry {
+    hwnd: HwndWrapper,
+    monitor_index: u32,
+}
+
+static OVERLAY_WINDOWS: Mutex<Vec<OverlayEntry>> = Mutex::new(Vec::new());
 static CURRENT_OPACITY: Mutex<f32> = Mutex::new(0.3);
 static ALLOW_CAPTURE: Mutex<bool> = Mutex::new(false);
 static CLASS_REGISTERED: Mutex<bool> = Mutex::new(false);
 static WATCHDOG_RUNNING: AtomicBool = AtomicBool::new(false);
 static EVENT_HOOK: Mutex<Option<HookWrapper>> = Mutex::new(None);
+
+/// Per-monitor opacities (monitor_index -> opacity)
+static PER_MONITOR_OPACITY: Mutex<Option<Vec<(u32, f32)>>> = Mutex::new(None);
+
+/// Counter used during monitor enumeration to assign indices
+static MONITOR_ENUM_COUNTER: Mutex<u32> = Mutex::new(0);
 
 /// Timestamp (millis since epoch) of the last foreground event.
 /// 0 means no pending re-assertion.
@@ -111,9 +123,9 @@ fn register_class() -> bool {
 /// Re-assert topmost on all overlay windows.
 fn reassert_topmost() {
     let windows = OVERLAY_WINDOWS.lock().unwrap();
-    for wrapper in windows.iter() {
+    for entry in windows.iter() {
         unsafe {
-            let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
+            let hwnd = HWND(entry.hwnd.0 as *mut std::ffi::c_void);
             if IsWindow(Some(hwnd)).as_bool() {
                 let _ = SetWindowPos(
                     hwnd,
@@ -195,6 +207,14 @@ unsafe extern "system" fn monitor_enum_proc(
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
 
+        // Assign a monitor index
+        let monitor_index = {
+            let mut counter = MONITOR_ENUM_COUNTER.lock().unwrap();
+            let idx = *counter;
+            *counter += 1;
+            idx
+        };
+
         let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap_or_default();
         let class_name: Vec<u16> = CLASS_NAME.encode_utf16().collect();
 
@@ -214,7 +234,18 @@ unsafe extern "system" fn monitor_enum_proc(
         );
 
         if let Ok(hwnd) = hwnd {
-            let opacity = *CURRENT_OPACITY.lock().unwrap();
+            // Determine opacity: per-monitor if available, else global
+            let opacity = {
+                let per_mon = PER_MONITOR_OPACITY.lock().unwrap();
+                if let Some(ref map) = *per_mon {
+                    map.iter()
+                        .find(|(idx, _)| *idx == monitor_index)
+                        .map(|(_, o)| *o)
+                        .unwrap_or(*CURRENT_OPACITY.lock().unwrap())
+                } else {
+                    *CURRENT_OPACITY.lock().unwrap()
+                }
+            };
             let alpha = (opacity * 255.0) as u8;
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
 
@@ -240,7 +271,10 @@ unsafe extern "system" fn monitor_enum_proc(
             OVERLAY_WINDOWS
                 .lock()
                 .unwrap()
-                .push(HwndWrapper(hwnd.0 as isize));
+                .push(OverlayEntry {
+                    hwnd: HwndWrapper(hwnd.0 as isize),
+                    monitor_index,
+                });
         }
     }
 
@@ -257,6 +291,9 @@ pub fn show_overlay(opacity: f32, allow_capture: bool) {
     if !register_class() {
         return;
     }
+
+    // Reset monitor counter before enumeration
+    *MONITOR_ENUM_COUNTER.lock().unwrap() = 0;
 
     unsafe {
         let _ = EnumDisplayMonitors(None, None, Some(monitor_enum_proc), LPARAM(0));
@@ -305,9 +342,9 @@ pub fn show_overlay(opacity: f32, allow_capture: bool) {
 
                     let windows = OVERLAY_WINDOWS.lock().unwrap();
                     let mut needs_recreate = false;
-                    for wrapper in windows.iter() {
+                    for entry in windows.iter() {
                         unsafe {
-                            let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
+                            let hwnd = HWND(entry.hwnd.0 as *mut std::ffi::c_void);
                             if !IsWindow(Some(hwnd)).as_bool() {
                                 needs_recreate = true;
                                 break;
@@ -323,9 +360,9 @@ pub fn show_overlay(opacity: f32, allow_capture: bool) {
                         {
                             uninstall_event_hook();
                             let mut windows = OVERLAY_WINDOWS.lock().unwrap();
-                            for wrapper in windows.drain(..) {
+                            for entry in windows.drain(..) {
                                 unsafe {
-                                    let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
+                                    let hwnd = HWND(entry.hwnd.0 as *mut std::ffi::c_void);
                                     let _ = ShowWindow(hwnd, SW_HIDE);
                                     let _ = DestroyWindow(hwnd);
                                 }
@@ -334,6 +371,8 @@ pub fn show_overlay(opacity: f32, allow_capture: bool) {
                         if register_class() {
                             *CURRENT_OPACITY.lock().unwrap() = opacity;
                             *ALLOW_CAPTURE.lock().unwrap() = allow_capture;
+                            // Reset monitor counter before re-enumeration
+                            *MONITOR_ENUM_COUNTER.lock().unwrap() = 0;
                             unsafe {
                                 let _ = EnumDisplayMonitors(
                                     None,
@@ -357,9 +396,9 @@ pub fn hide_overlay() {
     REASSERT_REQUESTED_AT.store(0, Ordering::SeqCst);
 
     let mut windows = OVERLAY_WINDOWS.lock().unwrap();
-    for wrapper in windows.drain(..) {
+    for entry in windows.drain(..) {
         unsafe {
-            let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
+            let hwnd = HWND(entry.hwnd.0 as *mut std::ffi::c_void);
             let _ = ShowWindow(hwnd, SW_HIDE);
             let _ = DestroyWindow(hwnd);
         }
@@ -371,12 +410,14 @@ pub fn hide_overlay() {
 pub fn set_opacity(opacity: f32) {
     let opacity = opacity.clamp(0.0, 0.9);
     *CURRENT_OPACITY.lock().unwrap() = opacity;
+    // Clear per-monitor overrides when setting global opacity
+    *PER_MONITOR_OPACITY.lock().unwrap() = None;
     let alpha = (opacity * 255.0) as u8;
 
     let windows = OVERLAY_WINDOWS.lock().unwrap();
-    for wrapper in windows.iter() {
+    for entry in windows.iter() {
         unsafe {
-            let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
+            let hwnd = HWND(entry.hwnd.0 as *mut std::ffi::c_void);
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
         }
     }
@@ -384,6 +425,118 @@ pub fn set_opacity(opacity: f32) {
 
     // Re-assert on user-initiated change
     reassert_topmost();
+}
+
+/// Set opacity for a specific monitor by index.
+pub fn set_monitor_opacity(monitor_index: u32, opacity: f32) {
+    let opacity = opacity.clamp(0.0, 0.9);
+
+    // Update the per-monitor map
+    {
+        let mut per_mon = PER_MONITOR_OPACITY.lock().unwrap();
+        let map = per_mon.get_or_insert_with(Vec::new);
+        if let Some(entry) = map.iter_mut().find(|(idx, _)| *idx == monitor_index) {
+            entry.1 = opacity;
+        } else {
+            map.push((monitor_index, opacity));
+        }
+    }
+
+    let alpha = (opacity * 255.0) as u8;
+    let windows = OVERLAY_WINDOWS.lock().unwrap();
+    for entry in windows.iter() {
+        if entry.monitor_index == monitor_index {
+            unsafe {
+                let hwnd = HWND(entry.hwnd.0 as *mut std::ffi::c_void);
+                let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
+            }
+        }
+    }
+    drop(windows);
+    reassert_topmost();
+}
+
+/// Set per-monitor opacities from a map (used when showing overlay in multi-monitor mode).
+pub fn set_per_monitor_opacities(opacities: &std::collections::HashMap<u32, f32>) {
+    let vec: Vec<(u32, f32)> = opacities.iter().map(|(k, v)| (*k, *v)).collect();
+    *PER_MONITOR_OPACITY.lock().unwrap() = Some(vec);
+}
+
+/// Get the number of monitors that have overlay windows.
+#[allow(dead_code)]
+pub fn get_monitor_count() -> u32 {
+    OVERLAY_WINDOWS.lock().unwrap().len() as u32
+}
+
+/// Enumerate connected monitors and return their count.
+pub fn enumerate_monitor_count() -> u32 {
+    use std::sync::atomic::AtomicU32;
+    static COUNT: AtomicU32 = AtomicU32::new(0);
+    COUNT.store(0, Ordering::SeqCst);
+
+    unsafe extern "system" fn count_proc(
+        _: HMONITOR,
+        _: HDC,
+        _: *mut RECT,
+        _: LPARAM,
+    ) -> windows::core::BOOL {
+        COUNT.fetch_add(1, Ordering::SeqCst);
+        windows::core::BOOL::from(true)
+    }
+
+    unsafe {
+        let _ = EnumDisplayMonitors(None, None, Some(count_proc), LPARAM(0));
+    }
+    COUNT.load(Ordering::SeqCst)
+}
+
+/// Get the monitor index (0-based) that contains the given point (cursor position).
+/// Returns 0 if no match found.
+pub fn get_monitor_index_at_point(x: i32, y: i32) -> u32 {
+    use windows::Win32::Graphics::Gdi::MonitorFromPoint;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST;
+
+    let pt = POINT { x, y };
+    let target_monitor = unsafe { MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) };
+
+    // Enumerate monitors and find matching index
+    struct EnumData {
+        target: HMONITOR,
+        found_index: u32,
+        current_index: u32,
+    }
+
+    unsafe extern "system" fn find_proc(
+        hmonitor: HMONITOR,
+        _: HDC,
+        _: *mut RECT,
+        lparam: LPARAM,
+    ) -> windows::core::BOOL {
+        let data = &mut *(lparam.0 as *mut EnumData);
+        if hmonitor == data.target {
+            data.found_index = data.current_index;
+        }
+        data.current_index += 1;
+        windows::core::BOOL::from(true)
+    }
+
+    let mut data = EnumData {
+        target: target_monitor,
+        found_index: 0,
+        current_index: 0,
+    };
+
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(find_proc),
+            LPARAM(&mut data as *mut EnumData as isize),
+        );
+    }
+
+    data.found_index
 }
 
 /// Check if overlay is visible

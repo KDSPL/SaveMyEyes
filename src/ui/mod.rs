@@ -98,6 +98,17 @@ pub fn create_window(config: Arc<Mutex<AppConfig>>) -> HWND {
             ui.enabled_toggle.checked = cfg.is_enabled;
             ui.autostart_toggle.checked = cfg.launch_on_login;
             ui.auto_update_toggle.checked = cfg.auto_update;
+            ui.multi_monitor_toggle.checked = cfg.multi_monitor;
+            ui.multi_monitor_enabled = cfg.multi_monitor;
+            // Initialize per-monitor sliders
+            let mon_count = overlay::enumerate_monitor_count();
+            ui.monitor_count = mon_count;
+            for i in 0..mon_count {
+                let opacity = cfg.per_monitor_opacity.get(&i).copied().unwrap_or(cfg.opacity);
+                let mut s = controls::SliderState::new((opacity * 100.0).round() as i32);
+                s.monitor_index = Some(i);
+                ui.monitor_sliders.push(s);
+            }
             ui.shortcut_texts = [
                 cfg.hotkey_toggle.clone(),
                 cfg.hotkey_increase.clone(),
@@ -147,6 +158,15 @@ pub fn sync_from_config(hwnd: HWND) {
         let cfg = state.config.lock().unwrap();
         state.ui.slider.value = (cfg.opacity * 100.0).round() as i32;
         state.ui.enabled_toggle.checked = cfg.is_enabled;
+        state.ui.multi_monitor_enabled = cfg.multi_monitor;
+        state.ui.multi_monitor_toggle.checked = cfg.multi_monitor;
+        // Sync per-monitor sliders
+        for slider in state.ui.monitor_sliders.iter_mut() {
+            if let Some(idx) = slider.monitor_index {
+                let opacity = cfg.per_monitor_opacity.get(&idx).copied().unwrap_or(cfg.opacity);
+                slider.value = (opacity * 100.0).round() as i32;
+            }
+        }
         drop(cfg);
         invalidate(hwnd);
     }
@@ -237,6 +257,7 @@ unsafe extern "system" fn wnd_proc(
             // Slider drag
             if state.ui.active_tab == Tab::Dimmer
                 && point_in_rect(x, y, &state.ui.slider.thumb_rect)
+                && !state.ui.multi_monitor_enabled
             {
                 state.ui.slider.dragging = true;
                 SetCapture(hwnd);
@@ -244,6 +265,20 @@ unsafe extern "system" fn wnd_proc(
                 state.ui.slider.value = val;
                 invalidate(hwnd);
                 return LRESULT(0);
+            }
+
+            // Multi-monitor slider drag
+            if state.ui.active_tab == Tab::Dimmer && state.ui.multi_monitor_enabled {
+                for i in 0..state.ui.monitor_sliders.len() {
+                    if point_in_rect(x, y, &state.ui.monitor_sliders[i].thumb_rect) {
+                        state.ui.monitor_sliders[i].dragging = true;
+                        SetCapture(hwnd);
+                        let val = state.ui.monitor_sliders[i].value_from_x(x);
+                        state.ui.monitor_sliders[i].value = val;
+                        invalidate(hwnd);
+                        return LRESULT(0);
+                    }
+                }
             }
 
             // Dimmer toggle
@@ -257,6 +292,9 @@ unsafe extern "system" fn wnd_proc(
                     cfg.is_enabled = enabled;
                     config::save_config(&cfg);
                     if enabled {
+                        if cfg.multi_monitor {
+                            overlay::set_per_monitor_opacities(&cfg.per_monitor_opacity);
+                        }
                         overlay::show_overlay(cfg.opacity, false);
                     } else {
                         overlay::hide_overlay();
@@ -310,6 +348,52 @@ unsafe extern "system" fn wnd_proc(
                             "Auto-update enabled"
                         } else {
                             "Auto-update disabled"
+                        },
+                    );
+                    invalidate(hwnd);
+                    return LRESULT(0);
+                }
+
+                // Multi-monitor toggle
+                if point_in_rect(x, y, &state.ui.multi_monitor_toggle.rect) {
+                    state.ui.multi_monitor_toggle.checked = !state.ui.multi_monitor_toggle.checked;
+                    let enabled = state.ui.multi_monitor_toggle.checked;
+                    state.ui.multi_monitor_enabled = enabled;
+                    {
+                        let mut cfg = state.config.lock().unwrap();
+                        cfg.multi_monitor = enabled;
+                        if enabled {
+                            // Initialize per-monitor opacities from global if not set
+                            let mon_count = overlay::enumerate_monitor_count();
+                            state.ui.monitor_count = mon_count;
+                            state.ui.monitor_sliders.clear();
+                            for i in 0..mon_count {
+                                let opacity = cfg.per_monitor_opacity.get(&i).copied().unwrap_or(cfg.opacity);
+                                let mut s = controls::SliderState::new((opacity * 100.0).round() as i32);
+                                s.monitor_index = Some(i);
+                                state.ui.monitor_sliders.push(s);
+                                let default_opacity = cfg.opacity;
+                                cfg.per_monitor_opacity.entry(i).or_insert(default_opacity);
+                            }
+                            // Apply per-monitor opacities to overlay
+                            overlay::set_per_monitor_opacities(&cfg.per_monitor_opacity);
+                            if cfg.is_enabled {
+                                overlay::show_overlay(cfg.opacity, cfg.allow_capture);
+                            }
+                        } else {
+                            // Revert to global opacity
+                            if cfg.is_enabled && overlay::is_visible() {
+                                overlay::set_opacity(cfg.opacity);
+                            }
+                        }
+                        config::save_config(&cfg);
+                    }
+                    show_toast(
+                        hwnd,
+                        if enabled {
+                            "Multi-monitor mode enabled"
+                        } else {
+                            "Multi-monitor mode disabled"
                         },
                     );
                     invalidate(hwnd);
@@ -431,6 +515,37 @@ unsafe extern "system" fn wnd_proc(
                     show_toast(hwnd, "Opacity updated");
                     invalidate(hwnd);
                 }
+
+                // Multi-monitor slider release
+                for i in 0..state.ui.monitor_sliders.len() {
+                    if state.ui.monitor_sliders[i].dragging {
+                        state.ui.monitor_sliders[i].dragging = false;
+                        let _ = ReleaseCapture();
+
+                        let val = state.ui.monitor_sliders[i].value;
+                        let mon_idx = i as u32;
+                        {
+                            let mut cfg = state.config.lock().unwrap();
+                            let opacity = val as f32 / 100.0;
+                            cfg.per_monitor_opacity.insert(mon_idx, opacity);
+                            config::save_config(&cfg);
+                            if overlay::is_visible() {
+                                overlay::set_monitor_opacity(mon_idx, opacity);
+                            }
+                            // Auto-enable dimmer
+                            if !cfg.is_enabled && val > 0 {
+                                cfg.is_enabled = true;
+                                state.ui.enabled_toggle.checked = true;
+                                config::save_config(&cfg);
+                                overlay::set_per_monitor_opacities(&cfg.per_monitor_opacity);
+                                overlay::show_overlay(cfg.opacity, cfg.allow_capture);
+                            }
+                        }
+                        show_toast(hwnd, &format!("Monitor {} opacity updated", mon_idx + 1));
+                        invalidate(hwnd);
+                        break;
+                    }
+                }
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
@@ -453,6 +568,25 @@ unsafe extern "system" fn wnd_proc(
                     }
 
                     invalidate(hwnd);
+                }
+
+                // Multi-monitor slider drag
+                for i in 0..state.ui.monitor_sliders.len() {
+                    if state.ui.monitor_sliders[i].dragging {
+                        let val = state.ui.monitor_sliders[i].value_from_x(x);
+                        state.ui.monitor_sliders[i].value = val;
+
+                        // Live update per-monitor overlay opacity
+                        {
+                            let cfg = state.config.lock().unwrap();
+                            if overlay::is_visible() || cfg.is_enabled {
+                                overlay::set_monitor_opacity(i as u32, val as f32 / 100.0);
+                            }
+                        }
+
+                        invalidate(hwnd);
+                        break;
+                    }
                 }
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)

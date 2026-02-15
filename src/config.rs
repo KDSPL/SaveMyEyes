@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -18,6 +19,12 @@ pub struct AppConfig {
     pub hotkey_decrease: String,
     #[serde(default = "default_auto_update")]
     pub auto_update: bool,
+    /// Multi-monitor independent brightness control
+    #[serde(default)]
+    pub multi_monitor: bool,
+    /// Per-monitor opacity values keyed by monitor index (0-based)
+    #[serde(default)]
+    pub per_monitor_opacity: HashMap<u32, f32>,
 }
 
 fn default_auto_update() -> bool {
@@ -40,6 +47,8 @@ impl Default for AppConfig {
             hotkey_increase: "Ctrl+Alt+Up".into(),
             hotkey_decrease: "Ctrl+Alt+Down".into(),
             auto_update: true,
+            multi_monitor: false,
+            per_monitor_opacity: HashMap::new(),
         }
     }
 }
