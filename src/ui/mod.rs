@@ -40,6 +40,11 @@ pub fn create_window(config: Arc<Mutex<AppConfig>>) -> HWND {
 
     unsafe {
         let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap_or_default();
+        let icon_id = PCWSTR(1 as *const u16);
+        let hicon = LoadIconW(Some(hinstance.into()), icon_id)
+            .ok()
+            .or_else(|| LoadIconW(None, IDI_APPLICATION).ok())
+            .unwrap_or_default();
 
         let wc = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
@@ -48,6 +53,7 @@ pub fn create_window(config: Arc<Mutex<AppConfig>>) -> HWND {
             lpszClassName: PCWSTR(class_name.as_ptr()),
             hbrBackground: CreateSolidBrush(CLR_BACKGROUND),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hIcon: hicon,
             ..Default::default()
         };
 
