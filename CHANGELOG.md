@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.9.3
+- Multi-monitor support is here!
+
 ## v0.9.2
 - Fix auto-updater issue
 

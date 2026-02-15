@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static CHECKING: AtomicBool = AtomicBool::new(false);
 
 /// Application version — single source of truth
-pub const APP_VERSION: &str = "0.9.2";
+pub const APP_VERSION: &str = "0.9.3";
 
 #[derive(Debug)]
 pub enum UpdateResult {
