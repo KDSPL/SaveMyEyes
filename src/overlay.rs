@@ -1,13 +1,17 @@
-// Screen dimmer implementation using the Windows Magnification API.
+// Screen dimmer using layered overlay windows with WDA_EXCLUDEFROMCAPTURE.
 //
-// Primary method: MagSetFullscreenColorEffect
-// This applies a 5×5 color transformation matrix at the DWM compositor level.
-// Because it operates below the window manager, there are NO overlay windows
-// and therefore ZERO z-order issues — completely flicker-free.
+// This approach creates transparent, click-through, topmost overlay windows
+// on each monitor. The key feature is SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)
+// which tells the DWM compositor to exclude these windows from screenshot and
+// screen recording capture — so ShareX, OBS, Snipping Tool, etc. will capture
+// the screen WITHOUT the dimming effect.
 //
-// Fallback method: Layered overlay windows (used if Magnification API fails)
-// Creates WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST windows.
-// This has inherent z-order flickering potential with Chrome and similar apps.
+// Z-order strategy (flicker-free):
+//   • Overlay is created with WS_EX_TOPMOST (enters the topmost z-band)
+//   • We do NOT aggressively re-assert topmost via timers or event hooks
+//   • We re-assert topmost ONLY on explicit user actions (opacity change, toggle)
+//   • This eliminates the z-order ping-pong with Chrome/other topmost windows
+//     that was causing flickering
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -17,10 +21,6 @@ use windows::Win32::Graphics::Gdi::{
     CreateSolidBrush, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
-use windows::Win32::UI::Magnification::{
-    MagInitialize, MagSetFullscreenColorEffect, MagUninitialize, MAGCOLOREFFECT,
-};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, IsWindow, RegisterClassW,
     SetLayeredWindowAttributes, SetWindowDisplayAffinity, SetWindowPos, ShowWindow, CS_HREDRAW,
@@ -29,109 +29,21 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 
-// ── Shared state ──────────────────────────────────────────────────────
-
-// Thread-safe wrappers for raw pointers
+// Thread-safe wrapper for HWND
 struct HwndWrapper(isize);
 unsafe impl Send for HwndWrapper {}
 unsafe impl Sync for HwndWrapper {}
 
-struct HookWrapper(isize);
-unsafe impl Send for HookWrapper {}
-unsafe impl Sync for HookWrapper {}
-
-/// Which dimming backend is active
-#[derive(Clone, Copy, PartialEq)]
-enum DimMethod {
-    None,
-    Magnification,
-    Overlay,
-}
-
-static DIM_METHOD: Mutex<DimMethod> = Mutex::new(DimMethod::None);
 static OVERLAY_WINDOWS: Mutex<Vec<HwndWrapper>> = Mutex::new(Vec::new());
 static CURRENT_OPACITY: Mutex<f32> = Mutex::new(0.3);
 static ALLOW_CAPTURE: Mutex<bool> = Mutex::new(false);
 static CLASS_REGISTERED: Mutex<bool> = Mutex::new(false);
 static WATCHDOG_RUNNING: AtomicBool = AtomicBool::new(false);
-static EVENT_HOOK: Mutex<Option<HookWrapper>> = Mutex::new(None);
-static MAG_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 const CLASS_NAME: &str = "SaveMyEyesOverlay\0";
 
-// WinEvent constants
-const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
-const EVENT_SYSTEM_MOVESIZEEND: u32 = 0x000B;
-const WINEVENT_OUTOFCONTEXT: u32 = 0x0000;
-const WINEVENT_SKIPOWNPROCESS: u32 = 0x0002;
-
-// ── Magnification API (primary, flicker-free) ─────────────────────────
-
-/// Build a 5×5 color matrix that dims the screen.
-/// The identity matrix is:
-///   [1 0 0 0 0]    R
-///   [0 1 0 0 0]    G
-///   [0 0 1 0 0]    B
-///   [0 0 0 1 0]    A
-///   [0 0 0 0 1]    bias
-/// We scale R, G, B by `brightness` (1.0 = full bright, 0.1 = very dim).
-fn make_dim_matrix(opacity: f32) -> MAGCOLOREFFECT {
-    // opacity is 0.0..0.9 where higher = darker
-    // brightness = 1.0 - opacity (e.g., opacity 0.5 → brightness 0.5)
-    let brightness = (1.0 - opacity).clamp(0.1, 1.0);
-
-    let mut transform = [0.0f32; 25];
-    // Row-major 5×5 matrix
-    transform[0] = brightness; // R → R
-    transform[6] = brightness; // G → G
-    transform[12] = brightness; // B → B
-    transform[18] = 1.0; // A → A
-    transform[24] = 1.0; // bias → bias
-
-    MAGCOLOREFFECT { transform }
-}
-
-/// Identity matrix (restores normal colors)
-fn identity_matrix() -> MAGCOLOREFFECT {
-    let mut transform = [0.0f32; 25];
-    transform[0] = 1.0;
-    transform[6] = 1.0;
-    transform[12] = 1.0;
-    transform[18] = 1.0;
-    transform[24] = 1.0;
-    MAGCOLOREFFECT { transform }
-}
-
-/// Try to apply dimming via the Magnification API.
-/// Returns true if successful.
-fn mag_set_dim(opacity: f32) -> bool {
-    // Initialize Magnification API if needed
-    if !MAG_INITIALIZED.load(Ordering::SeqCst) {
-        let ok = unsafe { MagInitialize().as_bool() };
-        if !ok {
-            return false;
-        }
-        MAG_INITIALIZED.store(true, Ordering::SeqCst);
-    }
-
-    let effect = make_dim_matrix(opacity);
-    unsafe { MagSetFullscreenColorEffect(&effect).as_bool() }
-}
-
-/// Remove the Magnification color effect (restore normal colors)
-fn mag_clear() {
-    if MAG_INITIALIZED.load(Ordering::SeqCst) {
-        let identity = identity_matrix();
-        unsafe {
-            let _ = MagSetFullscreenColorEffect(&identity);
-            let _ = MagUninitialize();
-        }
-        MAG_INITIALIZED.store(false, Ordering::SeqCst);
-    }
-}
-
-// ── Overlay fallback ──────────────────────────────────────────────────
-
+/// Minimal window proc. No WM_WINDOWPOSCHANGING override — this was the
+/// source of z-order flickering. We let Windows manage position naturally.
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     msg: u32,
@@ -170,7 +82,10 @@ fn register_class() -> bool {
     }
 }
 
-fn reassert_topmost() {
+/// Gently re-assert topmost on all overlay windows.
+/// Called only on explicit user actions (opacity change, toggle), NOT on a timer.
+/// Uses SWP_NOSENDCHANGING to avoid notifying other apps.
+fn reassert_topmost_once() {
     let windows = OVERLAY_WINDOWS.lock().unwrap();
     for wrapper in windows.iter() {
         unsafe {
@@ -190,49 +105,7 @@ fn reassert_topmost() {
     }
 }
 
-unsafe extern "system" fn win_event_proc(
-    _hook: HWINEVENTHOOK,
-    _event: u32,
-    _hwnd: HWND,
-    _id_object: i32,
-    _id_child: i32,
-    _id_event_thread: u32,
-    _event_time: u32,
-) {
-    reassert_topmost();
-}
-
-fn install_event_hook() {
-    let mut hook_guard = EVENT_HOOK.lock().unwrap();
-    if hook_guard.is_some() {
-        return;
-    }
-    unsafe {
-        let hook = SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_MOVESIZEEND,
-            None,
-            Some(win_event_proc),
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-        );
-        if !hook.is_invalid() {
-            *hook_guard = Some(HookWrapper(hook.0 as isize));
-        }
-    }
-}
-
-fn uninstall_event_hook() {
-    let mut hook_guard = EVENT_HOOK.lock().unwrap();
-    if let Some(wrapper) = hook_guard.take() {
-        unsafe {
-            let hook = HWINEVENTHOOK(wrapper.0 as *mut std::ffi::c_void);
-            let _ = UnhookWinEvent(hook);
-        }
-    }
-}
-
+/// Callback for EnumDisplayMonitors — creates one overlay per monitor
 unsafe extern "system" fn monitor_enum_proc(
     hmonitor: HMONITOR,
     _hdc: HDC,
@@ -268,10 +141,14 @@ unsafe extern "system" fn monitor_enum_proc(
         );
 
         if let Ok(hwnd) = hwnd {
+            // Set opacity
             let opacity = *CURRENT_OPACITY.lock().unwrap();
             let alpha = (opacity * 255.0) as u8;
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
 
+            // Set capture exclusion — this is the key feature.
+            // WDA_EXCLUDEFROMCAPTURE tells DWM to skip this window when
+            // screenshot/recording apps capture the screen.
             let allow_capture = *ALLOW_CAPTURE.lock().unwrap();
             let affinity = if allow_capture {
                 WDA_NONE
@@ -280,6 +157,7 @@ unsafe extern "system" fn monitor_enum_proc(
             };
             let _ = SetWindowDisplayAffinity(hwnd, affinity);
 
+            // Initial topmost positioning
             let _ = SetWindowPos(
                 hwnd,
                 Some(HWND_TOPMOST),
@@ -300,7 +178,15 @@ unsafe extern "system" fn monitor_enum_proc(
     windows::core::BOOL::from(true)
 }
 
-fn show_overlay_fallback() {
+/// Show overlay with given opacity on all monitors.
+/// The overlay is excluded from screen capture by default.
+pub fn show_overlay(opacity: f32, allow_capture: bool) {
+    *CURRENT_OPACITY.lock().unwrap() = opacity.clamp(0.0, 0.9);
+    *ALLOW_CAPTURE.lock().unwrap() = allow_capture;
+
+    // Remove any existing overlays
+    hide_overlay();
+
     if !register_class() {
         return;
     }
@@ -309,12 +195,12 @@ fn show_overlay_fallback() {
         let _ = EnumDisplayMonitors(None, None, Some(monitor_enum_proc), LPARAM(0));
     }
 
-    install_event_hook();
-
-    // Watchdog for externally destroyed windows
+    // Lightweight watchdog: only detects externally destroyed windows (e.g.,
+    // by third-party tools). Does NOT re-assert z-order — that's intentional
+    // to avoid flickering.
     if !WATCHDOG_RUNNING.swap(true, Ordering::SeqCst) {
         std::thread::spawn(|| loop {
-            std::thread::sleep(std::time::Duration::from_secs(3));
+            std::thread::sleep(std::time::Duration::from_secs(5));
 
             let windows = OVERLAY_WINDOWS.lock().unwrap();
             if windows.is_empty() {
@@ -338,22 +224,31 @@ fn show_overlay_fallback() {
             if needs_recreate {
                 let opacity = *CURRENT_OPACITY.lock().unwrap();
                 let allow_capture = *ALLOW_CAPTURE.lock().unwrap();
-                hide_overlay_windows();
+                // Clear and rebuild
+                {
+                    let mut windows = OVERLAY_WINDOWS.lock().unwrap();
+                    for wrapper in windows.drain(..) {
+                        unsafe {
+                            let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
+                            let _ = ShowWindow(hwnd, SW_HIDE);
+                            let _ = DestroyWindow(hwnd);
+                        }
+                    }
+                }
                 if register_class() {
                     *CURRENT_OPACITY.lock().unwrap() = opacity;
                     *ALLOW_CAPTURE.lock().unwrap() = allow_capture;
                     unsafe {
                         let _ = EnumDisplayMonitors(None, None, Some(monitor_enum_proc), LPARAM(0));
                     }
-                    install_event_hook();
                 }
             }
         });
     }
 }
 
-fn hide_overlay_windows() {
-    uninstall_event_hook();
+/// Hide overlay windows
+pub fn hide_overlay() {
     let mut windows = OVERLAY_WINDOWS.lock().unwrap();
     for wrapper in windows.drain(..) {
         unsafe {
@@ -364,69 +259,28 @@ fn hide_overlay_windows() {
     }
 }
 
-// ── Public API ────────────────────────────────────────────────────────
-
-/// Show the dimmer with given opacity on all monitors.
-/// Tries the Magnification API first (flicker-free), falls back to overlay.
-pub fn show_overlay(opacity: f32, allow_capture: bool) {
-    let opacity = opacity.clamp(0.0, 0.9);
-    *CURRENT_OPACITY.lock().unwrap() = opacity;
-    *ALLOW_CAPTURE.lock().unwrap() = allow_capture;
-
-    // Clean up any existing dimming
-    hide_overlay();
-
-    // Try Magnification API first (compositor-level, flicker-free)
-    if mag_set_dim(opacity) {
-        *DIM_METHOD.lock().unwrap() = DimMethod::Magnification;
-        return;
-    }
-
-    // Fall back to overlay windows
-    *DIM_METHOD.lock().unwrap() = DimMethod::Overlay;
-    show_overlay_fallback();
-}
-
-/// Hide the dimmer
-pub fn hide_overlay() {
-    let method = *DIM_METHOD.lock().unwrap();
-    match method {
-        DimMethod::Magnification => {
-            mag_clear();
-        }
-        DimMethod::Overlay => {
-            hide_overlay_windows();
-        }
-        DimMethod::None => {}
-    }
-    *DIM_METHOD.lock().unwrap() = DimMethod::None;
-}
-
-/// Update dimmer opacity
+/// Update overlay alpha on all windows.
+/// Also gently re-asserts topmost (since this is an explicit user action,
+/// it's safe to do — the user won't see flicker because they caused it).
 pub fn set_opacity(opacity: f32) {
     let opacity = opacity.clamp(0.0, 0.9);
     *CURRENT_OPACITY.lock().unwrap() = opacity;
+    let alpha = (opacity * 255.0) as u8;
 
-    let method = *DIM_METHOD.lock().unwrap();
-    match method {
-        DimMethod::Magnification => {
-            let _ = mag_set_dim(opacity);
+    let windows = OVERLAY_WINDOWS.lock().unwrap();
+    for wrapper in windows.iter() {
+        unsafe {
+            let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
         }
-        DimMethod::Overlay => {
-            let alpha = (opacity * 255.0) as u8;
-            let windows = OVERLAY_WINDOWS.lock().unwrap();
-            for wrapper in windows.iter() {
-                unsafe {
-                    let hwnd = HWND(wrapper.0 as *mut std::ffi::c_void);
-                    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
-                }
-            }
-        }
-        DimMethod::None => {}
     }
+    drop(windows);
+
+    // Re-assert topmost on user-initiated opacity change
+    reassert_topmost_once();
 }
 
-/// Check if dimmer is active
+/// Check if overlay is visible
 pub fn is_visible() -> bool {
-    *DIM_METHOD.lock().unwrap() != DimMethod::None
+    !OVERLAY_WINDOWS.lock().unwrap().is_empty()
 }
