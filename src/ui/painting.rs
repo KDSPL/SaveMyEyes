@@ -208,7 +208,7 @@ fn draw_header(hdc: HDC, y: i32, state: &mut UiState, fonts: &Fonts) -> i32 {
         CLR_FOREGROUND,
         fonts.title,
     );
-    draw_text_simple(hdc, "Screen Dimmer", text_x, y + 22, CLR_MUTED_FG, fonts.xs);
+    draw_text_simple(hdc, "Screen Dimmer", text_x, y + 26, CLR_MUTED_FG, fonts.xs);
 
     let credit_by = "An open-source project by";
     let credit_name = "KraftPixel";
@@ -319,19 +319,33 @@ fn draw_dimmer_tab(hdc: HDC, y: i32, state: &mut UiState, fonts: &Fonts) {
 
             // Monitor number label on the left
             let mon_label = format!("{}", i + 1);
-            let (lw, lh) = measure_text(hdc, &mon_label, fonts.title);
-            let label_x = inner_x;
-            let label_y = card_top + (slider_card_height - lh) / 2;
+            let (lw, lh) = measure_text(hdc, &mon_label, fonts.small_bold);
+            let label_pad_x = 8;
+            let label_pad_y = 4;
+            let label_rect_w = lw + label_pad_x * 2;
+            let label_rect_h = lh + label_pad_y * 2;
+            let label_rect_x = inner_x;
+            let label_rect_y = card_top + (slider_card_height - label_rect_h) / 2;
 
-            // Draw a small circle behind the number
-            let circle_r = lh.max(lw) / 2 + 4;
-            let circle_cx = label_x + circle_r;
-            let circle_cy = label_y + lh / 2;
-            draw_circle(hdc, circle_cx, circle_cy, circle_r, CLR_SECONDARY);
-            draw_text_simple(hdc, &mon_label, circle_cx - lw / 2, label_y, CLR_FOREGROUND, fonts.small_bold);
+            // Draw a rounded rectangle behind the number
+            let label_bg_rect = RECT {
+                left: label_rect_x,
+                top: label_rect_y,
+                right: label_rect_x + label_rect_w,
+                bottom: label_rect_y + label_rect_h,
+            };
+            draw_rounded_rect(hdc, &label_bg_rect, 4, CLR_SECONDARY, CLR_SECONDARY);
+            draw_text_simple(
+                hdc,
+                &mon_label,
+                label_rect_x + (label_rect_w - lw) / 2,
+                label_rect_y + (label_rect_h - lh) / 2,
+                CLR_FOREGROUND,
+                fonts.small_bold,
+            );
 
             // Slider area starts after the label
-            let slider_left = label_x + circle_r * 2 + 12;
+            let slider_left = label_rect_x + label_rect_w + 12;
 
             // Badge
             let badge_text = format!("{}%", state.monitor_sliders[i].value);
