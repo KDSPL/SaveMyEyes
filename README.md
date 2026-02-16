@@ -78,7 +78,7 @@ Settings are stored in `%AppData%\SaveMyEyes\config.json`:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+GNU GPL - see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
