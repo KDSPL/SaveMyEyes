@@ -7,6 +7,7 @@ mod config;
 mod hotkeys;
 mod overlay;
 mod tray;
+mod ui;
 mod updater;
 
 fn main() {

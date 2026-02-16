@@ -25,6 +25,9 @@ pub struct AppConfig {
     /// Per-monitor opacity values keyed by monitor index (0-based)
     #[serde(default)]
     pub per_monitor_opacity: HashMap<u32, f32>,
+    /// Per-display opacity keyed by display name (for persistence across reconnects)
+    #[serde(default)]
+    pub per_display_opacity: HashMap<String, f32>,
 }
 
 fn default_auto_update() -> bool {
@@ -49,6 +52,7 @@ impl Default for AppConfig {
             auto_update: true,
             multi_monitor: false,
             per_monitor_opacity: HashMap::new(),
+            per_display_opacity: HashMap::new(),
         }
     }
 }

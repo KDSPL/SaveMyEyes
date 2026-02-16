@@ -60,6 +60,7 @@ pub fn disable() -> bool {
 }
 
 /// Check if autostart is currently enabled.
+#[allow(dead_code)]
 pub fn is_enabled() -> bool {
     plist_path().exists()
 }

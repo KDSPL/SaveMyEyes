@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.9.4
+- **macOS native port** — Full AppKit-based macOS app via objc2 with card-based dark UI, NSSlider controls, and custom toggle switches.
+- **Per-display brightness memory** — Brightness settings are now persisted by display name so reconnecting a monitor restores its last brightness level.
+- **Actual display names** — Monitor sliders show real display names (e.g. "Built-in Retina Display") instead of generic "Monitor 1, Monitor 2" labels; long names are truncated.
+- **Cursor-aware hotkeys** — Increase/Decrease hotkeys target the monitor under the mouse cursor.
+- **Capture-safe overlays (macOS)** — Dimming overlays are hidden from screenshots and screen recordings.
+- **Multi-monitor independent dimming** — Each connected display can be dimmed independently with its own slider.
+- **Smart auto-updater** — Downloads the update .dmg, gracefully quits the running app, replaces the bundle, and relaunches automatically.
+- **Monitor hot-plug support** — Detects monitor connect/disconnect events, refreshes overlays and rebuilds the settings UI automatically.
+- **Accessibility permission indicator** — Shortcuts tab shows green/red status for Accessibility permission.
+- Keyboard shortcut badges split into individual key pills with "+" separators, vertically centered.
+- Improved badge text centering in percentage pills.
+- Vertically centered text and toggles inside all card sections.
+- Updated README with cross-platform documentation, macOS hotkeys, and build instructions.
+- GitHub Actions release workflow updated for both Windows and macOS builds.
+
 ## v0.9.2
 - Fix auto-updater issue
 

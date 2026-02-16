@@ -14,11 +14,13 @@ pub fn open_url(url: &str) {
 }
 
 /// Download the update .dmg to a temp file.
+#[allow(dead_code)]
 pub fn download_update(download_url: &str) -> Result<std::path::PathBuf, String> {
     savemyeyes_shared::updater::download_to_temp(download_url, "SaveMyEyes_update.dmg")
 }
 
 /// Check if the app was just updated
+#[allow(dead_code)]
 pub fn was_just_updated() -> bool {
     savemyeyes_shared::updater::was_just_updated()
 }

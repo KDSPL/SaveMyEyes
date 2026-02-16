@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "savemyeyes-macos"
-version = "0.9.2"
+version = "0.9.4"
 dependencies = [
  "block2",
  "dirs",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "savemyeyes-shared"
-version = "0.9.2"
+version = "0.9.4"
 dependencies = [
  "dirs",
  "serde",
@@ -613,7 +613,7 @@ dependencies = [
 
 [[package]]
 name = "savemyeyes-windows"
-version = "0.9.2"
+version = "0.9.4"
 dependencies = [
  "dirs",
  "embed-resource",
