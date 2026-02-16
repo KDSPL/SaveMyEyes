@@ -6,25 +6,38 @@ on:
       - 'v*'
 
 jobs:
-  release:
+  build-windows:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Windows
+        run: cargo build --release -p savemyeyes-windows
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: target/release/savemyeyes.exe
+
+  build-macos:
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
-            args: ''
-          # Uncomment to add more platforms:
-          # - platform: macos-latest
-          #   args: '--target aarch64-apple-darwin'
-          # - platform: macos-latest
-          #   args: '--target x86_64-apple-darwin'
-          # - platform: ubuntu-22.04
-          #   args: ''
-
-    runs-on: ${{ matrix.platform }}
-
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x86_64
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,15 +45,51 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.target }}
 
-      - name: Build
-        run: cargo build --release
+      - name: Build macOS (${{ matrix.arch }})
+        run: cargo build --release -p savemyeyes-macos --target ${{ matrix.target }}
+
+      - name: Create .app bundle
+        run: |
+          APP_DIR="SaveMyEyes.app/Contents/MacOS"
+          RES_DIR="SaveMyEyes.app/Contents/Resources"
+          mkdir -p "$APP_DIR" "$RES_DIR"
+          cp "target/${{ matrix.target }}/release/savemyeyes" "$APP_DIR/savemyeyes"
+          cp macos/Info.plist "SaveMyEyes.app/Contents/Info.plist"
+          if [ -f macos/AppIcon.icns ]; then
+            cp macos/AppIcon.icns "$RES_DIR/AppIcon.icns"
+          fi
+
+      - name: Create DMG
+        run: |
+          DMG_NAME="SaveMyEyes-macOS-${{ matrix.arch }}.dmg"
+          hdiutil create -volname "SaveMyEyes" -srcfolder SaveMyEyes.app -ov -format UDZO "$DMG_NAME"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-${{ matrix.arch }}
+          path: SaveMyEyes-macOS-${{ matrix.arch }}.dmg
+
+  release:
+    needs: [build-windows, build-macos]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: target/release/savemyeyes.exe
+          files: |
+            artifacts/windows-exe/savemyeyes.exe
+            artifacts/macos-dmg-arm64/SaveMyEyes-macOS-arm64.dmg
+            artifacts/macos-dmg-x86_64/SaveMyEyes-macOS-x86_64.dmg
           draft: true
           prerelease: false

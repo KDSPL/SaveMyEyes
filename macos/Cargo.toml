@@ -1,0 +1,71 @@
+[package]
+name = "savemyeyes-macos"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "SaveMyEyes — native macOS screen dimmer"
+
+[[bin]]
+name = "savemyeyes"
+path = "src/main.rs"
+
+[dependencies]
+savemyeyes-shared = { path = "../shared" }
+
+# Core Objective-C runtime
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSArray",
+    "NSThread",
+    "NSRunLoop",
+    "NSDictionary",
+    "NSNotification",
+    "NSValue",
+    "NSURL",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSWindow",
+    "NSScreen",
+    "NSColor",
+    "NSView",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSMenu",
+    "NSMenuItem",
+    "NSEvent",
+    "NSImage",
+    "NSImageView",
+    "NSGraphics",
+    "NSAlert",
+    "NSButton",
+    "NSBox",
+    "NSControl",
+    "NSSlider",
+    "NSSwitch",
+    "NSSegmentedControl",
+    "NSSegmentedCell",
+    "NSRunningApplication",
+    "NSResponder",
+    "NSPanel",
+    "NSTextField",
+    "NSFont",
+    "NSText",
+    "NSAppearance",
+    "NSCell",
+    "NSActionCell",
+    "NSSliderCell",
+    "NSStatusBarButton",
+    "NSWindowTab",
+    "NSWindowTabGroup",
+    "NSBezierPath",
+    "NSWorkspace",
+] }
+block2 = "0.6"
+
+# Shared deps
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+ureq = "2"

@@ -1,0 +1,37 @@
+[package]
+name = "savemyeyes-windows"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "SaveMyEyes — native Windows screen dimmer"
+
+[[bin]]
+name = "savemyeyes"
+path = "src/main.rs"
+
+[dependencies]
+savemyeyes-shared = { path = "../shared" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+ureq = "2"
+
+[dependencies.windows]
+version = "0.61"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Accessibility",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_System_Com",
+    "Win32_Security",
+]
+
+[build-dependencies]
+embed-resource = "3"
