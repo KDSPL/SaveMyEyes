@@ -70,15 +70,15 @@ cd macos && ./build-app.sh   # Creates SaveMyEyes.app bundle
 
 - Dimmer tab:
 
-  ![Dimmer Tab](src/assets/screenshot-dimmer.png)
+  ![Dimmer Tab](windows/src/assets/screenshot-dimmer.png)
 
 - Settings tab: 
 
-  ![Settings Tab](src/assets/screenshot-settings.png)
+  ![Settings Tab](windows/src/assets/screenshot-settings.png)
 
 - Shortcuts tab: 
 
-  ![Shortcuts Tab](src/assets/screenshot-shortcuts.png)
+  ![Shortcuts Tab](windows/src/assets/screenshot-shortcuts.png)
 
 ## Tech Stack
 
