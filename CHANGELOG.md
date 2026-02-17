@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.5
+- **Full-screen dimming support (macOS)** — Switched from NSWindow overlays to Core Graphics gamma table manipulation (`CGSetDisplayTransferByFormula`), enabling dimming to work in all full-screen apps, Spaces, and even the screen saver.
+- **Wake-from-sleep recovery** — Gamma tables are automatically re-applied after waking from sleep or switching Spaces.
+- **Settings window level adjustment** — Reduced window level from `CGShieldingWindowLevel` to standard floating level since gamma doesn't require overlay windows.
+
 ## v0.9.4
 - **macOS native port** — Full AppKit-based macOS app via objc2 with card-based dark UI, NSSlider controls, and custom toggle switches.
 - **Per-display brightness memory** — Brightness settings are now persisted by display name so reconnecting a monitor restores its last brightness level.

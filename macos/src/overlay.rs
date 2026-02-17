@@ -1,156 +1,197 @@
-// macOS screen overlay using borderless transparent NSWindows.
+// macOS screen dimming using Core Graphics gamma tables.
 //
 // Strategy:
-//   • One NSWindow per screen (NSScreen.screens)
-//   • Window level = .screenSaver (above everything)
-//   • Ignores mouse events (click-through)
-//   • Semi-transparent black background with adjustable alpha
-//   • Capture-safe: setSharingType(.none) hides from screenshots & recordings
+//   • Manipulate each display's gamma transfer formula via
+//     CGSetDisplayTransferByFormula to reduce luminance.
+//   • Works everywhere — including full-screen apps, screen saver,
+//     and login window — because gamma is applied at the GPU output
+//     stage, not via window layering.
+//   • Invisible to screenshots and screen recordings (capture-safe)
+//     because gamma changes are applied after framebuffer composition.
 //
 // Multi-monitor:
-//   Each overlay window is mapped to a screen index.
-//   Per-monitor opacity is stored in the config.
+//   Each display is identified by CGDirectDisplayID and mapped to
+//   the user-facing NSScreen.localizedName(). Per-display opacity is
+//   stored in config keyed by display name.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
-use objc2::rc::Retained;
 use objc2::MainThreadMarker;
-use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSScreen, NSScreenSaverWindowLevel, NSWindow,
-    NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowSharingType,
-};
-use objc2_foundation::{NSRect, NSUInteger};
+use objc2_app_kit::NSScreen;
+use objc2_foundation::NSUInteger;
 
-struct OverlayWindow {
-    window: Retained<NSWindow>,
-    #[allow(dead_code)]
-    screen_index: u32,
+// ── Core Graphics FFI ───────────────────────────────────────────────────────
+
+type CGDirectDisplayID = u32;
+type CGGammaValue = f32;
+type CGError = i32;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGMainDisplayID() -> CGDirectDisplayID;
+    fn CGGetActiveDisplayList(
+        max_displays: u32,
+        active_displays: *mut CGDirectDisplayID,
+        display_count: *mut u32,
+    ) -> CGError;
+    fn CGSetDisplayTransferByFormula(
+        display: CGDirectDisplayID,
+        red_min: CGGammaValue,
+        red_max: CGGammaValue,
+        red_gamma: CGGammaValue,
+        green_min: CGGammaValue,
+        green_max: CGGammaValue,
+        green_gamma: CGGammaValue,
+        blue_min: CGGammaValue,
+        blue_max: CGGammaValue,
+        blue_gamma: CGGammaValue,
+    ) -> CGError;
+    fn CGDisplayRestoreColorSyncSettings();
 }
 
-// Safety: All overlay access is dispatched to the main thread via GCD.
-unsafe impl Send for OverlayWindow {}
-unsafe impl Sync for OverlayWindow {}
+// ── State ───────────────────────────────────────────────────────────────────
 
-static OVERLAY_WINDOWS: Mutex<Vec<OverlayWindow>> = Mutex::new(Vec::new());
+struct DimState {
+    active: bool,
+    /// Per-display opacity that is currently applied.
+    applied: HashMap<CGDirectDisplayID, f32>,
+}
 
-/// Show overlay windows on screens.
-/// When multi_monitor is false, only the primary (main) screen is dimmed.
-/// When multi_monitor is true, all screens are dimmed (each with its own opacity).
+static DIM_STATE: LazyLock<Mutex<DimState>> = LazyLock::new(|| {
+    Mutex::new(DimState {
+        active: false,
+        applied: HashMap::new(),
+    })
+});
+
+// ── Public API ──────────────────────────────────────────────────────────────
+
+/// Show (apply) dimming on screens.
+/// When multi_monitor is false, only the primary display is dimmed.
+/// When multi_monitor is true, all displays are dimmed with per-display opacity.
 pub fn show(
     mtm: MainThreadMarker,
     global_opacity: f32,
     multi_monitor: bool,
     per_display: &HashMap<String, f32>,
 ) {
-    hide();
-
-    let screens = NSScreen::screens(mtm);
-    let count = screens.count() as usize;
+    let displays = active_displays();
     let names = screen_names(mtm);
+    let display_ids = display_ids_for_screens(mtm);
+    let main_id = unsafe { CGMainDisplayID() };
 
-    let mut windows = OVERLAY_WINDOWS.lock().unwrap();
+    let mut state = DIM_STATE.lock().unwrap();
 
-    for i in 0..count {
-        // When multi-monitor is off, only dim the primary screen (index 0)
-        if !multi_monitor && i > 0 {
+    // Restore all displays first to avoid stale gamma
+    unsafe {
+        CGDisplayRestoreColorSyncSettings();
+    }
+    state.applied.clear();
+
+    for &did in displays.iter() {
+        // Single-monitor mode: only dim the primary display
+        if !multi_monitor && did != main_id {
             continue;
         }
 
-        let screen = screens.objectAtIndex(i as NSUInteger);
-        let frame: NSRect = screen.frame();
-
         let opacity = if multi_monitor {
-            names
-                .get(i)
-                .and_then(|n| per_display.get(n))
+            // Try to find by display name
+            let name = display_ids
+                .iter()
+                .find(|(id, _)| *id == did)
+                .and_then(|(_, idx)| names.get(*idx as usize));
+            name.and_then(|n| per_display.get(n))
                 .copied()
                 .unwrap_or(global_opacity)
         } else {
             global_opacity
         };
 
-        let window = create_overlay_window(mtm, frame, opacity);
-
-        // Configure behavior — appear on all Spaces, stationary, hidden from Exposé
-        // FullScreenAuxiliary prevents flashing during space transitions
-        window.setCollectionBehavior(
-            NSWindowCollectionBehavior::CanJoinAllSpaces
-                | NSWindowCollectionBehavior::Stationary
-                | NSWindowCollectionBehavior::IgnoresCycle
-                | NSWindowCollectionBehavior::FullScreenAuxiliary,
-        );
-
-        // Capture-safe: hide from screenshots and screen recordings
-        window.setSharingType(NSWindowSharingType::None);
-
-        window.orderFrontRegardless();
-
-        windows.push(OverlayWindow {
-            window,
-            screen_index: i as u32,
-        });
+        apply_gamma(did, opacity);
+        state.applied.insert(did, opacity);
     }
+
+    state.active = true;
+    eprintln!(
+        "SaveMyEyes: Gamma dimming applied to {} display(s).",
+        state.applied.len()
+    );
 }
 
-/// Hide and destroy all overlay windows.
+/// Remove dimming from all displays.
 pub fn hide() {
-    let mut windows = OVERLAY_WINDOWS.lock().unwrap();
-    for ow in windows.drain(..) {
-        ow.window.orderOut(None);
+    let mut state = DIM_STATE.lock().unwrap();
+    if state.active {
+        unsafe {
+            CGDisplayRestoreColorSyncSettings();
+        }
+        state.applied.clear();
+        state.active = false;
+        eprintln!("SaveMyEyes: Gamma restored on all displays.");
     }
 }
 
-/// Set opacity on all overlay windows (single-monitor mode).
-pub fn set_opacity(opacity: f32) {
-    let windows = OVERLAY_WINDOWS.lock().unwrap();
-    for ow in windows.iter() {
-        ow.window.setAlphaValue(opacity as f64);
-    }
-}
-
-/// Update opacity on existing overlay windows without recreating them.
-/// Returns false if no overlays exist (caller should use show() instead).
+/// Update opacity on already-dimmed displays without a full reset cycle.
+/// Returns false if dimming is not active (caller should use show()).
 pub fn update_opacity(
     mtm: MainThreadMarker,
     global_opacity: f32,
     multi_monitor: bool,
     per_display: &HashMap<String, f32>,
 ) -> bool {
-    let windows = OVERLAY_WINDOWS.lock().unwrap();
-    if windows.is_empty() {
+    let state = DIM_STATE.lock().unwrap();
+    if !state.active {
         return false;
     }
-    let names = screen_names(mtm);
-    for ow in windows.iter() {
-        let opacity = if multi_monitor {
-            names
-                .get(ow.screen_index as usize)
-                .and_then(|n| per_display.get(n))
-                .copied()
-                .unwrap_or(global_opacity)
-        } else {
-            global_opacity
-        };
-        ow.window.setAlphaValue(opacity as f64);
-    }
+    drop(state); // Release lock before calling show()
+
+    // Re-apply with new values
+    show(mtm, global_opacity, multi_monitor, per_display);
     true
 }
 
-/// Set opacity on a specific monitor's overlay window.
+/// Set opacity on all dimmed displays (single-monitor shorthand).
 #[allow(dead_code)]
-pub fn set_monitor_opacity(monitor_index: u32, opacity: f32) {
-    let windows = OVERLAY_WINDOWS.lock().unwrap();
-    for ow in windows.iter() {
-        if ow.screen_index == monitor_index {
-            ow.window.setAlphaValue(opacity as f64);
-        }
+pub fn set_opacity(opacity: f32) {
+    let state = DIM_STATE.lock().unwrap();
+    if !state.active {
+        return;
+    }
+    let applied_clone: Vec<CGDirectDisplayID> = state.applied.keys().copied().collect();
+    drop(state);
+    for did in applied_clone {
+        apply_gamma(did, opacity);
     }
 }
 
-/// Check if overlays are visible.
+/// Set opacity on a specific monitor by index.
+#[allow(dead_code)]
+pub fn set_monitor_opacity(monitor_index: u32, opacity: f32) {
+    let displays = active_displays();
+    if let Some(&did) = displays.get(monitor_index as usize) {
+        apply_gamma(did, opacity);
+    }
+}
+
+/// Check if dimming is active.
 pub fn is_visible() -> bool {
-    !OVERLAY_WINDOWS.lock().unwrap().is_empty()
+    DIM_STATE.lock().unwrap().active
+}
+
+/// Re-apply gamma after a Space change or wake from sleep.
+/// macOS can reset gamma tables during Space transitions.
+pub fn reorder_front() {
+    let state = DIM_STATE.lock().unwrap();
+    if !state.active {
+        return;
+    }
+    let snapshot: Vec<(CGDirectDisplayID, f32)> =
+        state.applied.iter().map(|(&k, &v)| (k, v)).collect();
+    drop(state);
+    for (did, opacity) in snapshot {
+        apply_gamma(did, opacity);
+    }
 }
 
 /// Get the screen index that contains the given point (mouse cursor).
@@ -160,7 +201,7 @@ pub fn screen_index_at_point(mtm: MainThreadMarker, x: f64, y: f64) -> u32 {
     let count = screens.count() as usize;
     for i in 0..count {
         let screen = screens.objectAtIndex(i as NSUInteger);
-        let frame: NSRect = screen.frame();
+        let frame = screen.frame();
         if x >= frame.origin.x
             && x < frame.origin.x + frame.size.width
             && y >= frame.origin.y
@@ -179,7 +220,6 @@ pub fn screen_count(mtm: MainThreadMarker) -> u32 {
 }
 
 /// Get display names for all connected screens.
-/// Returns a Vec of human-readable display names (e.g. "Built-in Retina Display", "DELL U2723QE").
 pub fn screen_names(mtm: MainThreadMarker) -> Vec<String> {
     let screens = NSScreen::screens(mtm);
     let count = screens.count() as usize;
@@ -187,7 +227,6 @@ pub fn screen_names(mtm: MainThreadMarker) -> Vec<String> {
     for i in 0..count {
         let screen = screens.objectAtIndex(i as NSUInteger);
         let name = screen.localizedName().to_string();
-        // Deduplicate: if same name already exists, append index
         let final_name = if names.contains(&name) {
             format!("{} ({})", name, i + 1)
         } else {
@@ -198,10 +237,14 @@ pub fn screen_names(mtm: MainThreadMarker) -> Vec<String> {
     names
 }
 
-/// Refresh overlay windows (e.g. after screen config changes).
-/// Re-creates overlays with current config.
+/// Refresh dimming (e.g. after screen config changes).
 #[allow(dead_code)]
-pub fn refresh(mtm: MainThreadMarker, global_opacity: f32, multi_monitor: bool, per_display: &HashMap<String, f32>) {
+pub fn refresh(
+    mtm: MainThreadMarker,
+    global_opacity: f32,
+    multi_monitor: bool,
+    per_display: &HashMap<String, f32>,
+) {
     if is_visible() {
         show(mtm, global_opacity, multi_monitor, per_display);
     }
@@ -209,34 +252,50 @@ pub fn refresh(mtm: MainThreadMarker, global_opacity: f32, multi_monitor: bool, 
 
 // ── Internal ────────────────────────────────────────────────────────────────
 
-fn create_overlay_window(mtm: MainThreadMarker, frame: NSRect, opacity: f32) -> Retained<NSWindow> {
-    let style = NSWindowStyleMask::Borderless;
+/// Apply gamma reduction on a single display.
+/// opacity 0.0 = no dimming, 0.9 = 90% dimmed.
+fn apply_gamma(display: CGDirectDisplayID, opacity: f32) {
+    let max = (1.0 - opacity).clamp(0.05, 1.0); // Never go fully black
+    unsafe {
+        CGSetDisplayTransferByFormula(
+            display,
+            0.0, max, 1.0, // Red:   min, max, gamma
+            0.0, max, 1.0, // Green: min, max, gamma
+            0.0, max, 1.0, // Blue:  min, max, gamma
+        );
+    }
+}
 
-    let window = unsafe {
-        NSWindow::initWithContentRect_styleMask_backing_defer(
-            mtm.alloc::<NSWindow>(),
-            frame,
-            style,
-            NSBackingStoreType::Buffered,
-            false,
-        )
-    };
+/// List all active (online) CGDirectDisplayIDs.
+fn active_displays() -> Vec<CGDirectDisplayID> {
+    let mut count: u32 = 0;
+    unsafe {
+        CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count);
+    }
+    if count == 0 {
+        return vec![];
+    }
+    let mut ids = vec![0u32; count as usize];
+    unsafe {
+        CGGetActiveDisplayList(count, ids.as_mut_ptr(), &mut count);
+    }
+    ids.truncate(count as usize);
+    ids
+}
 
-    // Make it a transparent overlay
-    window.setOpaque(false);
-    let black = NSColor::colorWithRed_green_blue_alpha(0.0, 0.0, 0.0, 1.0);
-    window.setBackgroundColor(Some(&black));
-    window.setAlphaValue(opacity as f64);
-
-    // Click-through: ignore all mouse events
-    window.setIgnoresMouseEvents(true);
-
-    // Above everything — use a very high level so no other app window
-    // can appear over the dimming overlay.
-    window.setLevel(NSScreenSaverWindowLevel + 1000);
-
-    // Don't show in dock or Exposé
-    window.setHidesOnDeactivate(false);
-
-    window
+/// Map NSScreen index → CGDirectDisplayID via deviceDescription["NSScreenNumber"].
+fn display_ids_for_screens(mtm: MainThreadMarker) -> Vec<(CGDirectDisplayID, u32)> {
+    let screens = NSScreen::screens(mtm);
+    let count = screens.count() as usize;
+    let mut result = Vec::with_capacity(count);
+    for i in 0..count {
+        let screen = screens.objectAtIndex(i as NSUInteger);
+        let desc = screen.deviceDescription();
+        let key = objc2_foundation::NSString::from_str("NSScreenNumber");
+        if let Some(val) = desc.objectForKey(&key) {
+            let did: u32 = unsafe { objc2::msg_send![&*val, unsignedIntValue] };
+            result.push((did, i as u32));
+        }
+    }
+    result
 }

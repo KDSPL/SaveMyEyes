@@ -212,14 +212,13 @@ define_class!(
             // Setup system tray (status bar item)
             tray::setup(mtm);
 
+            // Ensure accessibility permission is truly granted.
+            // This probes whether the TCC entry is functional (not stale)
+            // and resets + re-prompts if the binary hash has changed.
+            hotkeys::request_accessibility_if_needed();
+
             // Register global hotkeys
             hotkeys::register_all();
-
-            // Always ensure accessibility permission is granted.
-            // After an update the TCC entry is reset by the update script,
-            // but we also prompt on every cold start so the user never has
-            // to manually toggle the entry in System Settings.
-            hotkeys::request_accessibility_if_needed();
 
             // Show overlay if enabled
             if cfg.is_enabled {
@@ -239,6 +238,35 @@ define_class!(
                 );
             }
 
+            // Register for active-Space changes so we can re-apply gamma
+            // when the user switches Spaces (macOS may reset gamma tables).
+            // Also register for wake-from-sleep to re-apply gamma.
+            unsafe {
+                use objc2_foundation::NSNotificationCenter;
+                use objc2::runtime::AnyObject;
+                let ws: *mut AnyObject = objc2::msg_send![
+                    objc2::runtime::AnyClass::get(c"NSWorkspace").unwrap(),
+                    sharedWorkspace
+                ];
+                let ws_center: *mut NSNotificationCenter = objc2::msg_send![ws, notificationCenter];
+
+                let space_name = NSString::from_str("NSWorkspaceActiveSpaceDidChangeNotification");
+                (*ws_center).addObserver_selector_name_object(
+                    self,
+                    sel!(activeSpaceChanged:),
+                    Some(&space_name),
+                    None,
+                );
+
+                let wake_name = NSString::from_str("NSWorkspaceDidWakeNotification");
+                (*ws_center).addObserver_selector_name_object(
+                    self,
+                    sel!(didWakeFromSleep:),
+                    Some(&wake_name),
+                    None,
+                );
+            }
+
             // Schedule auto-update check
             schedule_update_check();
         }
@@ -250,6 +278,25 @@ define_class!(
             let mtm = MainThreadMarker::from(self);
             crate::ui::show_settings(mtm);
             true
+        }
+
+        #[unsafe(method(activeSpaceChanged:))]
+        fn active_space_changed(&self, _notification: &NSNotification) {
+            // Re-apply gamma when the user switches Spaces
+            // (macOS may reset gamma tables during Space transitions).
+            if overlay::is_visible() {
+                eprintln!("SaveMyEyes: Space changed — re-applying gamma.");
+                overlay::reorder_front();
+            }
+        }
+
+        #[unsafe(method(didWakeFromSleep:))]
+        fn did_wake_from_sleep(&self, _notification: &NSNotification) {
+            // macOS resets gamma tables on sleep/wake — re-apply dimming.
+            if overlay::is_visible() {
+                eprintln!("SaveMyEyes: Woke from sleep — re-applying gamma.");
+                overlay::reorder_front();
+            }
         }
 
         #[unsafe(method(screenParametersChanged:))]

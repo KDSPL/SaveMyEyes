@@ -31,7 +31,9 @@ pub fn register_all() {
     // NSEvent global monitor (runs on main thread, most reliable)
     install_ns_event_monitor();
 
-    // CGEventTap as backup (handles events when our app is active)
+    // CGEventTap (session-level, sees ALL key events across all apps —
+    // including ones consumed by the focused app like Chrome's Cmd+Shift+D).
+    // Requires Accessibility permission.
     std::thread::spawn(|| {
         install_event_tap();
     });
@@ -310,19 +312,55 @@ pub fn is_accessibility_granted() -> bool {
     unsafe { AXIsProcessTrustedWithOptions(std::ptr::null()) }
 }
 
-/// Prompt the user for accessibility permission if not already granted.
-/// If permission is stale (binary changed, toggle shows ON but macOS
-/// doesn't actually trust us), reset the TCC entry first so the user
-/// sees a clean prompt instead of a confusingly-already-enabled toggle.
-pub fn request_accessibility_if_needed() {
+/// Verify accessibility actually works by trying to create a CGEventTap.
+/// macOS can report "trusted" when the TCC entry is stale (binary hash changed).
+fn is_accessibility_functional() -> bool {
     if !is_accessibility_granted() {
-        eprintln!("SaveMyEyes: Accessibility not granted — clearing stale TCC entry…");
-        let _ = std::process::Command::new("tccutil")
-            .args(["reset", "Accessibility", "com.kdspl.savemyeyes"])
-            .output();
-        eprintln!("SaveMyEyes: Prompting for accessibility permission…");
-        request_accessibility_permission();
-    } else {
-        eprintln!("SaveMyEyes: Accessibility already granted.");
+        return false;
     }
+    // Try to create a temporary event tap — if it succeeds, permission is real
+    let event_mask: u64 = 1 << K_CG_EVENT_KEY_DOWN;
+    let tap = unsafe {
+        CGEventTapCreate(
+            K_CG_SESSION_EVENT_TAP,
+            K_CG_HEAD_INSERT_EVENT_TAP,
+            K_CG_EVENT_TAP_OPTION_LISTEN_ONLY,
+            event_mask,
+            event_tap_callback,
+            std::ptr::null_mut(),
+        )
+    };
+    if tap.is_null() {
+        eprintln!("SaveMyEyes: Accessibility reports trusted but CGEventTap creation failed — stale entry.");
+        false
+    } else {
+        // Release immediately; the real tap will be created by install_event_tap()
+        eprintln!("SaveMyEyes: Accessibility is functional (CGEventTap probe succeeded).");
+        // Note: We don't add this to a run loop so it gets dropped
+        true
+    }
+}
+
+/// Reset the Accessibility TCC entry for our bundle ID.
+/// Call this after an update so the stale entry is cleared before
+/// we prompt the user again.
+pub fn reset_accessibility() {
+    eprintln!("SaveMyEyes: Resetting Accessibility TCC entry…");
+    let _ = std::process::Command::new("tccutil")
+        .args(["reset", "Accessibility", "com.kdspl.savemyeyes"])
+        .output();
+}
+
+/// Ensure accessibility permission is truly granted.
+/// If the TCC entry is stale (reports granted but doesn't work),
+/// reset it and re-prompt.
+pub fn request_accessibility_if_needed() {
+    if is_accessibility_functional() {
+        eprintln!("SaveMyEyes: Accessibility already granted and functional.");
+        return;
+    }
+    // Either not granted, or the entry is stale — reset and re-prompt
+    reset_accessibility();
+    eprintln!("SaveMyEyes: Prompting for accessibility permission…");
+    request_accessibility_permission();
 }

@@ -389,8 +389,10 @@ pub fn show_settings(mtm: MainThreadMarker) {
     window.setTitle(&NSString::from_str("SaveMyEyes by KraftPixel"));
     window.center();
 
-    // Float above the overlay so the settings window is never dimmed
-    window.setLevel(NSScreenSaverWindowLevel + 2000);
+    // Use a floating window level so Settings stays above normal windows.
+    // Gamma-based dimming doesn't use overlay windows, so no need for
+    // CGShieldingWindowLevel — a standard floating level suffices.
+    window.setLevel(3); // NSFloatingWindowLevel
 
     // Force dark appearance
     if let Some(dark) =
