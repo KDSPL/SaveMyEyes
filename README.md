@@ -18,13 +18,13 @@ A lightweight, cross-platform desktop utility that reduces screen luminance via 
 
 ## Features
 
-- 🌙 **Adjustable Dimming** — Reduce screen brightness from 0% to 90%
-- 🖥️ **Multi-Monitor Support** — Independent brightness per display, remembers settings by display name
-- 📸 **Capture-Safe** — Automatically hidden from screenshots and recordings
-- ⌨️ **Global Hotkeys** — Control dimming from anywhere (targets the monitor under the cursor)
-- 🚀 **Lightweight** — Native app on both platforms, near-zero CPU usage, minimal RAM
-- 🎨 **Modern UI** — Clean, dark theme interface with card-based layout
-- 🔄 **Cross-Platform** — Native Windows (Win32) and macOS (AppKit) builds
+- **Adjustable Dimming** — Reduce screen brightness from 0% to 90%
+- **Multi-Monitor Support** — Independent brightness per display, remembers settings by display name
+- **Capture-Safe** — Automatically hidden from screenshots and recordings
+- **Global Hotkeys** — Control dimming from anywhere (targets the monitor under the cursor)
+- **Lightweight** — Native app on both platforms, near-zero CPU usage, minimal RAM
+- **Modern UI** — Clean, dark theme interface with card-based layout
+- **Cross-Platform** — Native Windows (Win32) and macOS (AppKit) builds
 
 ## Hotkeys
 
