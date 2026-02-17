@@ -34,3 +34,6 @@ research/
 .cursor/
 .claude/
 .github/copilot-instructions.md
+
+# Website build artifacts
+website/
