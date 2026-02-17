@@ -99,7 +99,7 @@ Persisted settings include: opacity level, enabled state, autostart preference, 
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+GNU General Public License v3.0 — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
